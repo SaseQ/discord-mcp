@@ -23,6 +23,8 @@
 A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/introduction) server for the Discord API [(JDA)](https://jda.wiki/), 
 allowing seamless integration of Discord Bot with MCP-compatible applications like Claude Desktop.
 
+[![MCPHub.com Badge](https://mcphub.com/api/mcp-servers/saseq/discord-mcp/badge)](https://mcphub.com/mcp-servers/saseq/discord-mcp)
+
 Enable your AI assistants to seamlessly interact with Discord. Manage channels, send messages, and retrieve server information effortlessly. Enhance your Discord experience with powerful automation capabilities.
 
 
