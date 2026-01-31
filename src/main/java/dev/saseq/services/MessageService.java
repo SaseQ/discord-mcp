@@ -3,6 +3,8 @@ package dev.saseq.services;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.entities.Message;
 import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
+import net.dv8tion.jda.api.entities.channel.concrete.ThreadChannel;
+import net.dv8tion.jda.api.entities.channel.middleman.MessageChannel;
 import net.dv8tion.jda.api.entities.emoji.Emoji;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
@@ -18,6 +20,23 @@ public class MessageService {
 
     public MessageService(JDA jda) {
         this.jda = jda;
+    }
+
+    /**
+     * Helper method to get a MessageChannel by ID, checking both text channels and thread channels.
+     */
+    private MessageChannel getMessageChannelById(String channelId) {
+        // First try text channel
+        TextChannel textChannel = jda.getTextChannelById(channelId);
+        if (textChannel != null) {
+            return textChannel;
+        }
+        // Then try thread channel
+        ThreadChannel threadChannel = jda.getThreadChannelById(channelId);
+        if (threadChannel != null) {
+            return threadChannel;
+        }
+        return null;
     }
 
     /**
@@ -37,11 +56,11 @@ public class MessageService {
             throw new IllegalArgumentException("message cannot be null");
         }
 
-        TextChannel textChannelById = jda.getTextChannelById(channelId);
-        if (textChannelById == null) {
+        MessageChannel channel = getMessageChannelById(channelId);
+        if (channel == null) {
             throw new IllegalArgumentException("Channel not found by channelId");
         }
-        Message sentMessage = textChannelById.sendMessage(message).complete();
+        Message sentMessage = channel.sendMessage(message).complete();
         return "Message sent successfully. Message link: " + sentMessage.getJumpUrl();
     }
 
@@ -67,11 +86,11 @@ public class MessageService {
             throw new IllegalArgumentException("newMessage cannot be null");
         }
 
-        TextChannel textChannelById = jda.getTextChannelById(channelId);
-        if (textChannelById == null) {
+        MessageChannel channel = getMessageChannelById(channelId);
+        if (channel == null) {
             throw new IllegalArgumentException("Channel not found by channelId");
         }
-        Message messageById = textChannelById.retrieveMessageById(messageId).complete();
+        Message messageById = channel.retrieveMessageById(messageId).complete();
         if (messageById == null) {
             throw new IllegalArgumentException("Message not found by messageId");
         }
@@ -96,11 +115,11 @@ public class MessageService {
             throw new IllegalArgumentException("messageId cannot be null");
         }
 
-        TextChannel textChannelById = jda.getTextChannelById(channelId);
-        if (textChannelById == null) {
+        MessageChannel channel = getMessageChannelById(channelId);
+        if (channel == null) {
             throw new IllegalArgumentException("Channel not found by channelId");
         }
-        Message messageById = textChannelById.retrieveMessageById(messageId).complete();
+        Message messageById = channel.retrieveMessageById(messageId).complete();
         if (messageById == null) {
             throw new IllegalArgumentException("Message not found by messageId");
         }
@@ -126,11 +145,11 @@ public class MessageService {
             limit = Integer.parseInt(count);
         }
 
-        TextChannel textChannelById = jda.getTextChannelById(channelId);
-        if (textChannelById == null) {
+        MessageChannel channel = getMessageChannelById(channelId);
+        if (channel == null) {
             throw new IllegalArgumentException("Channel not found by channelId");
         }
-        List<Message> messages = textChannelById.getHistory().retrievePast(limit).complete();
+        List<Message> messages = channel.getHistory().retrievePast(limit).complete();
         List<String> formatedMessages = formatMessages(messages);
         return "**Retrieved " + messages.size() + " messages:** \n" + String.join("\n", formatedMessages);
     }
@@ -157,11 +176,11 @@ public class MessageService {
             throw new IllegalArgumentException("emoji cannot be null");
         }
 
-        TextChannel textChannelById = jda.getTextChannelById(channelId);
-        if (textChannelById == null) {
+        MessageChannel channel = getMessageChannelById(channelId);
+        if (channel == null) {
             throw new IllegalArgumentException("Channel not found by channelId");
         }
-        Message message = textChannelById.retrieveMessageById(messageId).complete();
+        Message message = channel.retrieveMessageById(messageId).complete();
         if (message == null) {
             throw new IllegalArgumentException("Message not found by messageId");
         }
@@ -191,16 +210,16 @@ public class MessageService {
             throw new IllegalArgumentException("emoji cannot be null");
         }
 
-        TextChannel textChannelById = jda.getTextChannelById(channelId);
-        if (textChannelById == null) {
+        MessageChannel channel = getMessageChannelById(channelId);
+        if (channel == null) {
             throw new IllegalArgumentException("Channel not found by channelId");
         }
-        Message message = textChannelById.retrieveMessageById(messageId).complete();
+        Message message = channel.retrieveMessageById(messageId).complete();
         if (message == null) {
             throw new IllegalArgumentException("Message not found by messageId");
         }
         message.removeReaction(Emoji.fromUnicode(emoji)).queue();
-        return "Added reaction successfully. Message link: " + message.getJumpUrl();
+        return "Removed reaction successfully. Message link: " + message.getJumpUrl();
     }
 
     private List<String> formatMessages(List<Message> messages) {
