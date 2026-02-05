@@ -6,6 +6,7 @@ import dev.saseq.services.UserService;
 import dev.saseq.services.ChannelService;
 import dev.saseq.services.CategoryService;
 import dev.saseq.services.WebhookService;
+import dev.saseq.services.ThreadService;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.JDABuilder;
 import net.dv8tion.jda.api.requests.GatewayIntent;
@@ -23,14 +24,16 @@ public class DiscordMcpConfig {
                                              UserService userService,
                                              ChannelService channelService,
                                              CategoryService categoryService,
-                                             WebhookService webhookService) {
+                                             WebhookService webhookService,
+                                             ThreadService threadService) {
         return MethodToolCallbackProvider.builder().toolObjects(
                 discordService,
                 messageService,
                 userService,
                 channelService,
                 categoryService,
-                webhookService
+                webhookService,
+                threadService
         ).build();
     }
 
