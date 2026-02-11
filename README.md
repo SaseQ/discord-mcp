@@ -178,6 +178,14 @@ claude mcp add mcp-server -- docker run --rm -i -e DISCORD_TOKEN=<YOUR_DISCORD_B
  - [`list_webhooks`](): List of webhooks on a specific channel
  - [`send_webhook_message`](): Send a message via webhook
 
+#### Role Management
+ - [`list_roles`](): Get a list of all roles on the server with their details
+ - [`create_role`](): Create a new role on the server
+ - [`edit_role`](): Modify an existing role's settings
+ - [`delete_role`](): Permanently delete a role from the server
+ - [`assign_role`](): Assign a role to a user
+ - [`remove_role`](): Remove a role from a user
+
 >If `DISCORD_GUILD_ID` is set, the `guildId` parameter becomes optional for all tools above.
 
 <hr>
