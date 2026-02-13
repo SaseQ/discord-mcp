@@ -186,6 +186,15 @@ claude mcp add mcp-server -- docker run --rm -i -e DISCORD_TOKEN=<YOUR_DISCORD_B
  - [`assign_role`](): Assign a role to a user
  - [`remove_role`](): Remove a role from a user
 
+#### Moderation and User Management
+- [`kick_member`](): Kicks a member from the server
+- [`ban_member`](): Bans a user from the server
+- [`unban_member`](): Removes a ban from a user
+- [`timeout_member`](): Disables communication for a member for a specified duration
+- [`remove_timeout`](): Removes a timeout (unmute) from a member before it expires
+- [`set_nickname`](): Changes a member's nickname on the server
+- [`get_bans`](): Returns a list of banned users on the server with ban reasons
+
 >If `DISCORD_GUILD_ID` is set, the `guildId` parameter becomes optional for all tools above.
 
 <hr>
