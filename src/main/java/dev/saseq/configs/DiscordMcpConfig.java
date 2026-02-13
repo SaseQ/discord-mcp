@@ -11,6 +11,7 @@ import dev.saseq.services.ModerationService;
 import dev.saseq.services.RoleService;
 import dev.saseq.services.VoiceChannelService;
 import dev.saseq.services.ScheduledEventService;
+import dev.saseq.services.InviteService;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.JDABuilder;
 import net.dv8tion.jda.api.requests.GatewayIntent;
@@ -33,7 +34,8 @@ public class DiscordMcpConfig {
                                              RoleService roleService,
                                              ModerationService moderationService,
                                              VoiceChannelService voiceChannelService,
-                                             ScheduledEventService scheduledEventService) {
+                                             ScheduledEventService scheduledEventService,
+                                             InviteService inviteService) {
         return MethodToolCallbackProvider.builder().toolObjects(
                 discordService,
                 messageService,
@@ -45,7 +47,8 @@ public class DiscordMcpConfig {
                 roleService,
                 moderationService,
                 voiceChannelService,
-                scheduledEventService
+                scheduledEventService,
+                inviteService
         ).build();
     }
 

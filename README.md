@@ -210,6 +210,12 @@ claude mcp add mcp-server -- docker run --rm -i -e DISCORD_TOKEN=<YOUR_DISCORD_B
 - [`list_guild_scheduled_events`](): List all active and scheduled events on the server
 - [`get_guild_scheduled_event_users`](): Get list of users interested in a scheduled event
 
+#### Invite Management
+- [`create_invite`](): Create a new invite link for a specific channel
+- [`list_invites`](): List all active invites on the server with their statistics
+- [`delete_invite`](): Delete (revoke) an invite so the link stops working
+- [`get_invite_details`](): Get details about a specific invite (works for any public invite)
+
 >If `DISCORD_GUILD_ID` is set, the `guildId` parameter becomes optional for all tools above.
 
 <hr>
