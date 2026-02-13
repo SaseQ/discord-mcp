@@ -9,6 +9,7 @@ import dev.saseq.services.WebhookService;
 import dev.saseq.services.ThreadService;
 import dev.saseq.services.ModerationService;
 import dev.saseq.services.RoleService;
+import dev.saseq.services.VoiceChannelService;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.JDABuilder;
 import net.dv8tion.jda.api.requests.GatewayIntent;
@@ -29,7 +30,8 @@ public class DiscordMcpConfig {
                                              WebhookService webhookService,
                                              ThreadService threadService,
                                              RoleService roleService,
-                                             ModerationService moderationService) {
+                                             ModerationService moderationService,
+                                             VoiceChannelService voiceChannelService) {
         return MethodToolCallbackProvider.builder().toolObjects(
                 discordService,
                 messageService,
@@ -39,7 +41,8 @@ public class DiscordMcpConfig {
                 webhookService,
                 threadService,
                 roleService,
-                moderationService
+                moderationService,
+                voiceChannelService
         ).build();
     }
 
@@ -50,7 +53,7 @@ public class DiscordMcpConfig {
             System.exit(1);
         }
         return JDABuilder.createDefault(token)
-                .enableIntents(GatewayIntent.GUILD_MEMBERS)
+                .enableIntents(GatewayIntent.GUILD_MEMBERS, GatewayIntent.GUILD_VOICE_STATES)
                 .build()
                 .awaitReady();
     }

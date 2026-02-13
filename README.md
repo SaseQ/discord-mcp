@@ -195,6 +195,14 @@ claude mcp add mcp-server -- docker run --rm -i -e DISCORD_TOKEN=<YOUR_DISCORD_B
 - [`set_nickname`](): Changes a member's nickname on the server
 - [`get_bans`](): Returns a list of banned users on the server with ban reasons
 
+#### Voice & Stage Channel Management
+- [`create_voice_channel`](): Create a new voice channel in a guild
+- [`create_stage_channel`](): Create a new stage channel for audio events
+- [`edit_voice_channel`](): Edit settings of a voice or stage channel (name, bitrate, user limit, region)
+- [`move_member`](): Move a member to another voice channel
+- [`disconnect_member`](): Disconnect a member from their current voice channel
+- [`modify_voice_state`](): Server mute or deafen a member in voice channels
+
 >If `DISCORD_GUILD_ID` is set, the `guildId` parameter becomes optional for all tools above.
 
 <hr>
