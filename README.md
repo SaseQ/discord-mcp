@@ -203,6 +203,13 @@ claude mcp add mcp-server -- docker run --rm -i -e DISCORD_TOKEN=<YOUR_DISCORD_B
 - [`disconnect_member`](): Disconnect a member from their current voice channel
 - [`modify_voice_state`](): Server mute or deafen a member in voice channels
 
+#### Scheduled Events Management
+- [`create_guild_scheduled_event`](): Schedule a new event on the server (voice, stage, or external)
+- [`edit_guild_scheduled_event`](): Modify event details or change its status (start, complete, cancel)
+- [`delete_guild_scheduled_event`](): Permanently delete a scheduled event
+- [`list_guild_scheduled_events`](): List all active and scheduled events on the server
+- [`get_guild_scheduled_event_users`](): Get list of users interested in a scheduled event
+
 >If `DISCORD_GUILD_ID` is set, the `guildId` parameter becomes optional for all tools above.
 
 <hr>

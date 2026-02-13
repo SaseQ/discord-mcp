@@ -10,6 +10,7 @@ import dev.saseq.services.ThreadService;
 import dev.saseq.services.ModerationService;
 import dev.saseq.services.RoleService;
 import dev.saseq.services.VoiceChannelService;
+import dev.saseq.services.ScheduledEventService;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.JDABuilder;
 import net.dv8tion.jda.api.requests.GatewayIntent;
@@ -31,7 +32,8 @@ public class DiscordMcpConfig {
                                              ThreadService threadService,
                                              RoleService roleService,
                                              ModerationService moderationService,
-                                             VoiceChannelService voiceChannelService) {
+                                             VoiceChannelService voiceChannelService,
+                                             ScheduledEventService scheduledEventService) {
         return MethodToolCallbackProvider.builder().toolObjects(
                 discordService,
                 messageService,
@@ -42,7 +44,8 @@ public class DiscordMcpConfig {
                 threadService,
                 roleService,
                 moderationService,
-                voiceChannelService
+                voiceChannelService,
+                scheduledEventService
         ).build();
     }
 
@@ -53,7 +56,7 @@ public class DiscordMcpConfig {
             System.exit(1);
         }
         return JDABuilder.createDefault(token)
-                .enableIntents(GatewayIntent.GUILD_MEMBERS, GatewayIntent.GUILD_VOICE_STATES)
+                .enableIntents(GatewayIntent.GUILD_MEMBERS, GatewayIntent.GUILD_VOICE_STATES, GatewayIntent.SCHEDULED_EVENTS)
                 .build()
                 .awaitReady();
     }
