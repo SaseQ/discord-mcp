@@ -161,10 +161,13 @@ claude mcp add mcp-server -- docker run --rm -i -e DISCORD_TOKEN=<YOUR_DISCORD_B
  - [`remove_reaction`](): Remove a specified reaction (emoji) from a message
 
 #### Channel Management
- - [`create_text_channel`](): Create text a channel
+ - [`create_text_channel`](): Create a new text channel
+ - [`edit_text_channel`](): Edit settings of a text channel (name, topic, nsfw, slowmode, category, position)
  - [`delete_channel`](): Delete a channel
  - [`find_channel`](): Find a channel type and ID using name and server ID
  - [`list_channels`](): List of all channels
+ - [`get_channel_info`](): Get detailed information about a channel
+ - [`move_channel`](): Move a channel to another category and/or change its position
 
 #### Category Management
  - [`create_category`](): Create a new category for channels
