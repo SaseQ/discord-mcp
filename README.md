@@ -213,6 +213,12 @@ claude mcp add mcp-server -- docker run --rm -i -e DISCORD_TOKEN=<YOUR_DISCORD_B
 - [`list_guild_scheduled_events`](): List all active and scheduled events on the server
 - [`get_guild_scheduled_event_users`](): Get list of users interested in a scheduled event
 
+#### Channel Permission Overwrites
+- [`list_channel_permission_overwrites`](): List all permission overwrites for a channel with role/member breakdown
+- [`upsert_role_channel_permissions`](): Create or update permission overwrite for a role on a channel
+- [`upsert_member_channel_permissions`](): Create or update permission overwrite for a member on a channel
+- [`delete_channel_permission_overwrite`](): Delete a permission overwrite for a role or member from a channel
+
 #### Invite Management
 - [`create_invite`](): Create a new invite link for a specific channel
 - [`list_invites`](): List all active invites on the server with their statistics
