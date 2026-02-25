@@ -225,6 +225,13 @@ claude mcp add mcp-server -- docker run --rm -i -e DISCORD_TOKEN=<YOUR_DISCORD_B
 - [`delete_invite`](): Delete (revoke) an invite so the link stops working
 - [`get_invite_details`](): Get details about a specific invite (works for any public invite)
 
+#### Emoji Management
+- [`list_emojis`](): List all custom emojis on the server
+- [`get_emoji_details`](): Get detailed information about a specific custom emoji
+- [`create_emoji`](): Upload a new custom emoji to the server (base64 or image URL, max 256KB)
+- [`edit_emoji`](): Edit an existing emoji's name or role restrictions
+- [`delete_emoji`](): Permanently delete a custom emoji from the server
+
 >If `DISCORD_GUILD_ID` is set, the `guildId` parameter becomes optional for all tools above.
 
 <hr>

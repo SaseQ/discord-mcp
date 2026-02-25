@@ -13,6 +13,7 @@ import dev.saseq.services.VoiceChannelService;
 import dev.saseq.services.ScheduledEventService;
 import dev.saseq.services.InviteService;
 import dev.saseq.services.ChannelPermissionService;
+import dev.saseq.services.EmojiService;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.JDABuilder;
 import net.dv8tion.jda.api.requests.GatewayIntent;
@@ -37,7 +38,8 @@ public class DiscordMcpConfig {
                                              VoiceChannelService voiceChannelService,
                                              ScheduledEventService scheduledEventService,
                                              InviteService inviteService,
-                                             ChannelPermissionService channelPermissionService) {
+                                             ChannelPermissionService channelPermissionService,
+                                             EmojiService emojiService) {
         return MethodToolCallbackProvider.builder().toolObjects(
                 discordService,
                 messageService,
@@ -51,7 +53,8 @@ public class DiscordMcpConfig {
                 voiceChannelService,
                 scheduledEventService,
                 inviteService,
-                channelPermissionService
+                channelPermissionService,
+                emojiService
         ).build();
     }
 
