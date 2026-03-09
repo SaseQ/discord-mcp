@@ -210,9 +210,32 @@ public class UserService {
                     String authorName = m.getAuthor().getName();
                     String timestamp = m.getTimeCreated().toString();
                     String content = m.getContentDisplay();
-                    String messageId = m.getId();
+                    String msgId = m.getId();
 
-                    return String.format("- (ID: %s) **[%s]** `%s`: ```%s```", messageId, authorName, timestamp, content);
+                    StringBuilder sb = new StringBuilder();
+                    sb.append(String.format("- (ID: %s) **[%s]** `%s`: ```%s```", msgId, authorName, timestamp, content));
+
+                    List<Message.Attachment> attachments = m.getAttachments();
+                    if (!attachments.isEmpty()) {
+                        sb.append("\n  Attachments:");
+                        for (Message.Attachment attachment : attachments) {
+                            sb.append(String.format("\n    - (Attachment ID: %s) `%s` (%s, %s) URL: %s",
+                                    attachment.getId(),
+                                    attachment.getFileName(),
+                                    formatFileSize(attachment.getSize()),
+                                    attachment.getContentType() != null ? attachment.getContentType() : "unknown",
+                                    attachment.getUrl()));
+                        }
+                    }
+
+                    return sb.toString();
                 }).toList();
+    }
+
+    private String formatFileSize(int bytes) {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024.0);
+        if (bytes < 1024 * 1024 * 1024) return String.format("%.1f MB", bytes / (1024.0 * 1024));
+        return String.format("%.1f GB", bytes / (1024.0 * 1024 * 1024));
     }
 }

@@ -222,15 +222,102 @@ public class MessageService {
         return "Removed reaction successfully. Message link: " + message.getJumpUrl();
     }
 
+    /**
+     * Retrieves attachment metadata from a specific message in a Discord channel.
+     *
+     * @param channelId    The ID of the channel containing the message.
+     * @param messageId    The ID of the message to retrieve attachments from.
+     * @param attachmentId Optional ID of a specific attachment (if omitted, returns all).
+     * @return A formatted string containing attachment metadata.
+     */
+    @Tool(name = "get_attachment", description = "Get attachment metadata (filename, size, content type, URLs) from a specific message. Returns info only, does not download files.")
+    public String getAttachment(@ToolParam(description = "Discord channel ID") String channelId,
+                                @ToolParam(description = "Discord message ID") String messageId,
+                                @ToolParam(description = "Specific attachment ID (omit to get all attachments)", required = false) String attachmentId) {
+        if (channelId == null || channelId.isEmpty()) {
+            throw new IllegalArgumentException("channelId cannot be null");
+        }
+        if (messageId == null || messageId.isEmpty()) {
+            throw new IllegalArgumentException("messageId cannot be null");
+        }
+
+        MessageChannel channel = getMessageChannelById(channelId);
+        if (channel == null) {
+            throw new IllegalArgumentException("Channel not found by channelId");
+        }
+        Message message = channel.retrieveMessageById(messageId).complete();
+        if (message == null) {
+            throw new IllegalArgumentException("Message not found by messageId");
+        }
+
+        List<Message.Attachment> attachments = message.getAttachments();
+        if (attachments.isEmpty()) {
+            return "This message has no attachments.";
+        }
+
+        if (attachmentId != null && !attachmentId.isEmpty()) {
+            Message.Attachment attachment = attachments.stream()
+                    .filter(a -> a.getId().equals(attachmentId))
+                    .findFirst()
+                    .orElse(null);
+            if (attachment == null) {
+                throw new IllegalArgumentException("Attachment not found by attachmentId");
+            }
+            return formatAttachmentDetail(attachment);
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("**Found ").append(attachments.size()).append(" attachment(s):**\n");
+        for (Message.Attachment attachment : attachments) {
+            sb.append(formatAttachmentDetail(attachment)).append("\n");
+        }
+        return sb.toString().trim();
+    }
+
+    private String formatAttachmentDetail(Message.Attachment attachment) {
+        return String.format(
+                "- (Attachment ID: %s) `%s` (%s, %s)\n  URL: %s\n  Proxy URL: %s",
+                attachment.getId(),
+                attachment.getFileName(),
+                formatFileSize(attachment.getSize()),
+                attachment.getContentType() != null ? attachment.getContentType() : "unknown",
+                attachment.getUrl(),
+                attachment.getProxyUrl()
+        );
+    }
+
     private List<String> formatMessages(List<Message> messages) {
         return messages.stream()
                 .map(m -> {
                     String authorName = m.getAuthor().getName();
                     String timestamp = m.getTimeCreated().toString();
                     String content = m.getContentDisplay();
-                    String messageId = m.getId();
+                    String msgId = m.getId();
 
-                    return String.format("- (ID: %s) **[%s]** `%s`: ```%s```", messageId, authorName, timestamp, content);
+                    StringBuilder sb = new StringBuilder();
+                    sb.append(String.format("- (ID: %s) **[%s]** `%s`: ```%s```", msgId, authorName, timestamp, content));
+
+                    List<Message.Attachment> attachments = m.getAttachments();
+                    if (!attachments.isEmpty()) {
+                        sb.append("\n  Attachments:");
+                        for (Message.Attachment attachment : attachments) {
+                            sb.append(String.format("\n    - (Attachment ID: %s) `%s` (%s, %s) URL: %s",
+                                    attachment.getId(),
+                                    attachment.getFileName(),
+                                    formatFileSize(attachment.getSize()),
+                                    attachment.getContentType() != null ? attachment.getContentType() : "unknown",
+                                    attachment.getUrl()));
+                        }
+                    }
+
+                    return sb.toString();
                 }).toList();
+    }
+
+    private String formatFileSize(int bytes) {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024.0);
+        if (bytes < 1024 * 1024 * 1024) return String.format("%.1f MB", bytes / (1024.0 * 1024));
+        return String.format("%.1f GB", bytes / (1024.0 * 1024 * 1024));
     }
 }
