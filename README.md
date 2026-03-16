@@ -175,13 +175,14 @@ claude mcp add mcp-server -- docker run --rm -i -e DISCORD_TOKEN=<YOUR_DISCORD_B
 - [`send_private_message`](): Send a private message to a specific user
 - [`edit_private_message`](): Edit a private message from a specific user
 - [`delete_private_message`](): Delete a private message from a specific user
-- [`read_private_messages`](): Read recent message history from a specific user
+- [`read_private_messages`](): Read recent message history from a specific user (includes attachment metadata)
 
 #### Message Management
  - [`send_message`](): Send a message to a specific channel
  - [`edit_message`](): Edit a message from a specific channel
  - [`delete_message`](): Delete a message from a specific channel
- - [`read_messages`](): Read recent message history from a specific channel
+ - [`read_messages`](): Read recent message history from a specific channel (includes attachment metadata)
+ - [`get_attachment`](): Get attachment metadata from a specific message
  - [`add_reaction`](): Add a reaction (emoji) to a specific message
  - [`remove_reaction`](): Remove a specified reaction (emoji) from a message
 
