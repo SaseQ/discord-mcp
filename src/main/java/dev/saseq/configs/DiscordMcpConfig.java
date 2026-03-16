@@ -7,7 +7,13 @@ import dev.saseq.services.ChannelService;
 import dev.saseq.services.CategoryService;
 import dev.saseq.services.WebhookService;
 import dev.saseq.services.ThreadService;
+import dev.saseq.services.ModerationService;
 import dev.saseq.services.RoleService;
+import dev.saseq.services.VoiceChannelService;
+import dev.saseq.services.ScheduledEventService;
+import dev.saseq.services.InviteService;
+import dev.saseq.services.ChannelPermissionService;
+import dev.saseq.services.EmojiService;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.JDABuilder;
 import net.dv8tion.jda.api.requests.GatewayIntent;
@@ -27,7 +33,13 @@ public class DiscordMcpConfig {
                                              CategoryService categoryService,
                                              WebhookService webhookService,
                                              ThreadService threadService,
-                                             RoleService roleService) {
+                                             RoleService roleService,
+                                             ModerationService moderationService,
+                                             VoiceChannelService voiceChannelService,
+                                             ScheduledEventService scheduledEventService,
+                                             InviteService inviteService,
+                                             ChannelPermissionService channelPermissionService,
+                                             EmojiService emojiService) {
         return MethodToolCallbackProvider.builder().toolObjects(
                 discordService,
                 messageService,
@@ -36,7 +48,13 @@ public class DiscordMcpConfig {
                 categoryService,
                 webhookService,
                 threadService,
-                roleService
+                roleService,
+                moderationService,
+                voiceChannelService,
+                scheduledEventService,
+                inviteService,
+                channelPermissionService,
+                emojiService
         ).build();
     }
 
@@ -47,7 +65,7 @@ public class DiscordMcpConfig {
             System.exit(1);
         }
         return JDABuilder.createDefault(token)
-                .enableIntents(GatewayIntent.GUILD_MEMBERS)
+                .enableIntents(GatewayIntent.GUILD_MEMBERS, GatewayIntent.GUILD_VOICE_STATES, GatewayIntent.SCHEDULED_EVENTS)
                 .build()
                 .awaitReady();
     }

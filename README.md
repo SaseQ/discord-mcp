@@ -73,7 +73,7 @@ The Discord MPC server can be configured by adding the following to your configu
       "command": "java",
       "args": [
         "-jar",
-        "/absolute/path/to/discord-mcp-0.0.1-SNAPSHOT.jar"
+        "/absolute/path/to/discord-mcp-1.0.0.jar"
       ],
       "env": {
         "DISCORD_TOKEN": "YOUR_DISCORD_BOT_TOKEN",
@@ -186,10 +186,13 @@ claude mcp add mcp-server -- docker run --rm -i -e DISCORD_TOKEN=<YOUR_DISCORD_B
  - [`remove_reaction`](): Remove a specified reaction (emoji) from a message
 
 #### Channel Management
- - [`create_text_channel`](): Create text a channel
+ - [`create_text_channel`](): Create a new text channel
+ - [`edit_text_channel`](): Edit settings of a text channel (name, topic, nsfw, slowmode, category, position)
  - [`delete_channel`](): Delete a channel
  - [`find_channel`](): Find a channel type and ID using name and server ID
  - [`list_channels`](): List of all channels
+ - [`get_channel_info`](): Get detailed information about a channel
+ - [`move_channel`](): Move a channel to another category and/or change its position
 
 #### Category Management
  - [`create_category`](): Create a new category for channels
@@ -210,6 +213,49 @@ claude mcp add mcp-server -- docker run --rm -i -e DISCORD_TOKEN=<YOUR_DISCORD_B
  - [`delete_role`](): Permanently delete a role from the server
  - [`assign_role`](): Assign a role to a user
  - [`remove_role`](): Remove a role from a user
+
+#### Moderation and User Management
+- [`kick_member`](): Kicks a member from the server
+- [`ban_member`](): Bans a user from the server
+- [`unban_member`](): Removes a ban from a user
+- [`timeout_member`](): Disables communication for a member for a specified duration
+- [`remove_timeout`](): Removes a timeout (unmute) from a member before it expires
+- [`set_nickname`](): Changes a member's nickname on the server
+- [`get_bans`](): Returns a list of banned users on the server with ban reasons
+
+#### Voice & Stage Channel Management
+- [`create_voice_channel`](): Create a new voice channel in a guild
+- [`create_stage_channel`](): Create a new stage channel for audio events
+- [`edit_voice_channel`](): Edit settings of a voice or stage channel (name, bitrate, user limit, region)
+- [`move_member`](): Move a member to another voice channel
+- [`disconnect_member`](): Disconnect a member from their current voice channel
+- [`modify_voice_state`](): Server mute or deafen a member in voice channels
+
+#### Scheduled Events Management
+- [`create_guild_scheduled_event`](): Schedule a new event on the server (voice, stage, or external)
+- [`edit_guild_scheduled_event`](): Modify event details or change its status (start, complete, cancel)
+- [`delete_guild_scheduled_event`](): Permanently delete a scheduled event
+- [`list_guild_scheduled_events`](): List all active and scheduled events on the server
+- [`get_guild_scheduled_event_users`](): Get list of users interested in a scheduled event
+
+#### Channel Permission Overwrites
+- [`list_channel_permission_overwrites`](): List all permission overwrites for a channel with role/member breakdown
+- [`upsert_role_channel_permissions`](): Create or update permission overwrite for a role on a channel
+- [`upsert_member_channel_permissions`](): Create or update permission overwrite for a member on a channel
+- [`delete_channel_permission_overwrite`](): Delete a permission overwrite for a role or member from a channel
+
+#### Invite Management
+- [`create_invite`](): Create a new invite link for a specific channel
+- [`list_invites`](): List all active invites on the server with their statistics
+- [`delete_invite`](): Delete (revoke) an invite so the link stops working
+- [`get_invite_details`](): Get details about a specific invite (works for any public invite)
+
+#### Emoji Management
+- [`list_emojis`](): List all custom emojis on the server
+- [`get_emoji_details`](): Get detailed information about a specific custom emoji
+- [`create_emoji`](): Upload a new custom emoji to the server (base64 or image URL, max 256KB)
+- [`edit_emoji`](): Edit an existing emoji's name or role restrictions
+- [`delete_emoji`](): Permanently delete a custom emoji from the server
 
 >If `DISCORD_GUILD_ID` is set, the `guildId` parameter becomes optional for all tools above.
 

@@ -12,7 +12,7 @@
 
     <groupId>dev.saseq</groupId>
     <artifactId>discord-mcp</artifactId>
-    <version>0.0.1</version>
+    <version>1.0.0</version>
     <name>discord-mcp</name>
     <description>discord-mcp</description>
 
