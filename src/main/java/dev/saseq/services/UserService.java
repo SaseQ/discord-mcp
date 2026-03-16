@@ -219,17 +219,23 @@ public class UserService {
                     if (!attachments.isEmpty()) {
                         sb.append("\n  Attachments:");
                         for (Message.Attachment attachment : attachments) {
-                            sb.append(String.format("\n    - (Attachment ID: %s) `%s` (%s, %s) URL: %s",
-                                    attachment.getId(),
-                                    attachment.getFileName(),
-                                    formatFileSize(attachment.getSize()),
-                                    attachment.getContentType() != null ? attachment.getContentType() : "unknown",
-                                    attachment.getUrl()));
+                            sb.append("\n    - ").append(formatAttachmentSummary(attachment));
                         }
                     }
 
                     return sb.toString();
                 }).toList();
+    }
+
+    private String formatAttachmentSummary(Message.Attachment attachment) {
+        return String.format(
+                "(Attachment ID: %s) `%s` (%s, %s) URL: %s",
+                attachment.getId(),
+                attachment.getFileName(),
+                formatFileSize(attachment.getSize()),
+                attachment.getContentType() != null ? attachment.getContentType() : "unknown",
+                attachment.getUrl()
+        );
     }
 
     private String formatFileSize(int bytes) {

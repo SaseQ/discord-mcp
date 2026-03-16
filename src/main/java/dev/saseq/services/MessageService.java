@@ -276,13 +276,20 @@ public class MessageService {
 
     private String formatAttachmentDetail(Message.Attachment attachment) {
         return String.format(
-                "- (Attachment ID: %s) `%s` (%s, %s)\n  URL: %s\n  Proxy URL: %s",
+                "- %s\n  Proxy URL: %s",
+                formatAttachmentSummary(attachment),
+                attachment.getProxyUrl()
+        );
+    }
+
+    private String formatAttachmentSummary(Message.Attachment attachment) {
+        return String.format(
+                "(Attachment ID: %s) `%s` (%s, %s) URL: %s",
                 attachment.getId(),
                 attachment.getFileName(),
                 formatFileSize(attachment.getSize()),
                 attachment.getContentType() != null ? attachment.getContentType() : "unknown",
-                attachment.getUrl(),
-                attachment.getProxyUrl()
+                attachment.getUrl()
         );
     }
 
@@ -301,12 +308,7 @@ public class MessageService {
                     if (!attachments.isEmpty()) {
                         sb.append("\n  Attachments:");
                         for (Message.Attachment attachment : attachments) {
-                            sb.append(String.format("\n    - (Attachment ID: %s) `%s` (%s, %s) URL: %s",
-                                    attachment.getId(),
-                                    attachment.getFileName(),
-                                    formatFileSize(attachment.getSize()),
-                                    attachment.getContentType() != null ? attachment.getContentType() : "unknown",
-                                    attachment.getUrl()));
+                            sb.append("\n    - ").append(formatAttachmentSummary(attachment));
                         }
                     }
 
