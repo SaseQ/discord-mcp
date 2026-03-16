@@ -6,9 +6,6 @@
     <a href="https://github.com/modelcontextprotocol/servers" target="_blank" style="margin: 2px;">
         <img alt="MCP Server" src="https://badge.mcpx.dev?type=server" style="display: inline-block; vertical-align: middle;"/>
     </a>
-    <a href="https://smithery.ai/server/@SaseQ/discord-mcp" target="_blank" style="margin: 2px;">
-        <img alt="Smithery Badge" src="https://camo.githubusercontent.com/ee5c6c6dc502821f4d57313b2885f7878af52be14142dd98526ea12aedf9b260/68747470733a2f2f736d6974686572792e61692f62616467652f40646d6f6e74676f6d65727934302f646565707365656b2d6d63702d736572766572" data-canonical-src="https://smithery.ai/server/@SaseQ/discord-mcp" style="display: inline-block; vertical-align: middle;"/>
-    </a>
     <a href="https://discord.gg/5Uvxe5jteM" target="_blank" style="margin: 2px;">
         <img alt="Discord" src="https://img.shields.io/discord/936242526120194108?color=7389D8&label&logo=discord&logoColor=ffffff" style="display: inline-block; vertical-align: middle;"/>
     </a>
@@ -92,12 +89,40 @@ The `DISCORD_GUILD_ID` environment variable is optional. When provided, it sets 
 
 <details>
     <summary style="font-size: 1.35em; font-weight: bold;">
-        ⚓ Smithery Installation
+        🦞 OpenClaw Installation
     </summary>
 
-Install Discord MCP Server automatically via [Smithery](https://smithery.ai/):
+Run this command.
 ```bash
-npx -y @smithery/cli@latest install @SaseQ/discord-mcp --client <CLIENT_NAME> --key <YOUR_SMITHERY_KEY>
+openclaw mcp add \
+  --name discord \
+  --transport stdio \
+  --command "docker" \
+  --args "run" \
+  --args "--rm" \
+  --args "-i" \
+  --args "-e" --args "DISCORD_TOKEN=<YOUR_DISCORD_BOT_TOKEN>" \
+  --args "-e" --args "DISCORD_GUILD_ID=<OPTIONAL_DEFAULT_SERVER_ID>" \
+  --args "saseq/discord-mcp:latest"
+```
+
+OR
+
+Pasting the following configuration into your OpenClaw `~/.openclaw/config.json` or `mcp_servers.json` file.
+```json
+{
+  "mcpServers": {
+    "mcp-server": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "-e", "DISCORD_TOKEN=<YOUR_DISCORD_BOT_TOKEN>",
+        "-e", "DISCORD_GUILD_ID=<OPTIONAL_DEFAULT_SERVER_ID>",
+        "saseq/discord-mcp:latest"
+      ]
+    }
+  }
+}
 ```
 
 </details>
