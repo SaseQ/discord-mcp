@@ -76,7 +76,7 @@ The Discord MPC server can be configured by adding the following to your configu
       "command": "java",
       "args": [
         "-jar",
-        "/absolute/path/to/discord-mcp-0.0.1-SNAPSHOT.jar"
+        "/absolute/path/to/discord-mcp-1.0.0.jar"
       ],
       "env": {
         "DISCORD_TOKEN": "YOUR_DISCORD_BOT_TOKEN",
