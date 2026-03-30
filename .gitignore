@@ -36,7 +36,3 @@ build/
 
 ### Mac OS ###
 .DS_Store
-
-## Claude
-.claude
-CLAUDE.md

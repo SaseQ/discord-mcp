@@ -1,0 +1,53 @@
+repos:
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-merge-conflict
+      - id: end-of-file-fixer
+      - id: check-added-large-files
+        args:
+          - '--maxkb=2048'
+          - '--enforce-all'
+      - id: check-case-conflict
+      - id: check-json
+      - id: check-yaml
+      - id: detect-aws-credentials
+        args:
+          - '--allow-missing-credentials'
+      - id: detect-private-key
+      - id: trailing-whitespace
+
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.config/.secrets.baseline']
+        exclude: .config/.secrets.baseline
+
+  - repo: local
+    hooks:
+      - id: no-commit-to-main
+        name: prevent direct commit to main
+        entry: >-
+          bash -c 'branch=$(git symbolic-ref --short HEAD 2>/dev/null);
+          [ "$branch" != "main" ] && [ "$branch" != "master" ]'
+        language: system
+        always_run: true
+        pass_filenames: false
+        stages: [pre-commit]
+
+      - id: no-push-to-main
+        name: prevent direct push to main
+        entry: >-
+          bash -c 'branch=$(git symbolic-ref --short HEAD 2>/dev/null);
+          [ "$branch" != "main" ] && [ "$branch" != "master" ]'
+        language: system
+        always_run: true
+        pass_filenames: false
+        stages: [pre-push]
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.0
+    hooks:
+      - id: gitleaks
