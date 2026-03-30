@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/img/Discord_MCP_full_logo.svg" width="60%" alt="DeepSeek-V3" />
+  <img src="assets/img/Discord_MCP_full_logo.svg" width="60%" alt="Discord MCP" />
 </div>
 <hr>
 <div align="center" style="line-height: 1;">
@@ -9,15 +9,21 @@
     <a href="https://discord.gg/5Uvxe5jteM" target="_blank" style="margin: 2px;">
         <img alt="Discord" src="https://img.shields.io/discord/936242526120194108?color=7389D8&label&logo=discord&logoColor=ffffff" style="display: inline-block; vertical-align: middle;"/>
     </a>
-    <a href="https://github.com/SaseQ/discord-mcp/blob/main/LICENSE" target="_blank" style="margin: 2px;">
-        <img alt="MIT License" src="https://img.shields.io/github/license/SaseQ/discord-mcp" style="display: inline-block; vertical-align: middle;"/>
+    <a href="https://github.com/PanthroCorp-Limited/discord-mcp/blob/main/LICENSE" target="_blank" style="margin: 2px;">
+        <img alt="MIT License" src="https://img.shields.io/github/license/PanthroCorp-Limited/discord-mcp" style="display: inline-block; vertical-align: middle;"/>
+    </a>
+    <a href="https://github.com/PanthroCorp-Limited/discord-mcp/actions/workflows/ci.yml" target="_blank" style="margin: 2px;">
+        <img alt="CI" src="https://github.com/PanthroCorp-Limited/discord-mcp/actions/workflows/ci.yml/badge.svg" style="display: inline-block; vertical-align: middle;"/>
+    </a>
+    <a href="https://github.com/PanthroCorp-Limited/discord-mcp/actions/workflows/ci.yml" target="_blank" style="margin: 2px;">
+        <img alt="Trivy" src="https://img.shields.io/badge/security-Trivy-1904DA?logo=aquasecurity&logoColor=white" style="display: inline-block; vertical-align: middle;"/>
     </a>
 </div>
 
 
 ## 📖 Description
 
-A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/introduction) server for the Discord API [(JDA)](https://jda.wiki/), 
+A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/introduction) server for the Discord API [(JDA)](https://jda.wiki/),
 allowing seamless integration of Discord Bot with MCP-compatible applications like Claude Desktop.
 
 Enable your AI assistants to seamlessly interact with Discord. Manage channels, send messages, and retrieve server information effortlessly. Enhance your Discord experience with powerful automation capabilities.
@@ -36,7 +42,7 @@ Enable your AI assistants to seamlessly interact with Discord. Manage channels, 
         "run", "--rm", "-i",
         "-e", "DISCORD_TOKEN=<YOUR_DISCORD_BOT_TOKEN>",
         "-e", "DISCORD_GUILD_ID=<OPTIONAL_DEFAULT_SERVER_ID>",
-        "saseq/discord-mcp:latest"
+        "ghcr.io/panthrocorp-limited/discord-mcp:latest"
       ]
     }
   }
@@ -50,7 +56,7 @@ Enable your AI assistants to seamlessly interact with Discord. Manage channels, 
 
 #### Clone the repository
 ```bash
-git clone https://github.com/SaseQ/discord-mcp
+git clone https://github.com/PanthroCorp-Limited/discord-mcp
 ```
 
 #### Build the project
@@ -103,7 +109,7 @@ openclaw mcp add \
   --args "-i" \
   --args "-e" --args "DISCORD_TOKEN=<YOUR_DISCORD_BOT_TOKEN>" \
   --args "-e" --args "DISCORD_GUILD_ID=<OPTIONAL_DEFAULT_SERVER_ID>" \
-  --args "saseq/discord-mcp:latest"
+  --args "ghcr.io/panthrocorp-limited/discord-mcp:latest"
 ```
 
 OR
@@ -118,7 +124,7 @@ Pasting the following configuration into your OpenClaw `~/.openclaw/config.json`
         "run", "--rm", "-i",
         "-e", "DISCORD_TOKEN=<YOUR_DISCORD_BOT_TOKEN>",
         "-e", "DISCORD_GUILD_ID=<OPTIONAL_DEFAULT_SERVER_ID>",
-        "saseq/discord-mcp:latest"
+        "ghcr.io/panthrocorp-limited/discord-mcp:latest"
       ]
     }
   }
@@ -144,7 +150,7 @@ Pasting the following configuration into your Cursor `~/.cursor/mcp.json` file i
         "run", "--rm", "-i",
         "-e", "DISCORD_TOKEN=<YOUR_DISCORD_BOT_TOKEN>",
         "-e", "DISCORD_GUILD_ID=<OPTIONAL_DEFAULT_SERVER_ID>",
-        "saseq/discord-mcp:latest"
+        "ghcr.io/panthrocorp-limited/discord-mcp:latest"
       ]
     }
   }
@@ -160,7 +166,7 @@ Pasting the following configuration into your Cursor `~/.cursor/mcp.json` file i
 
 Run this command. See [Claude Code MCP docs](https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/tutorials#set-up-model-context-protocol-mcp) for more info.
 ```bash
-claude mcp add mcp-server -- docker run --rm -i -e DISCORD_TOKEN=<YOUR_DISCORD_BOT_TOKEN> -e DISCORD_GUILD_ID=<OPTIONAL_DEFAULT_SERVER_ID> saseq/discord-mcp:latest
+claude mcp add mcp-server -- docker run --rm -i -e DISCORD_TOKEN=<YOUR_DISCORD_BOT_TOKEN> -e DISCORD_GUILD_ID=<OPTIONAL_DEFAULT_SERVER_ID> ghcr.io/panthrocorp-limited/discord-mcp:latest
 ```
 
 </details>
