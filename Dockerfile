@@ -9,6 +9,8 @@ RUN mvn clean package -DskipTests
 
 FROM amazoncorretto:17-alpine
 
+RUN apk upgrade --no-cache
+
 WORKDIR /app
 
 COPY --from=build /app/target/*.jar app.jar
