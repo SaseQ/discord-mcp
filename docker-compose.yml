@@ -1,0 +1,19 @@
+services:
+  discord-mcp:
+    container_name: discord-mcp
+    build:
+      context: .
+    image: saseq/discord-mcp:latest
+    restart: unless-stopped
+    ports:
+      - "8085:8085"
+    environment:
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-http}
+      DISCORD_TOKEN: ${DISCORD_TOKEN}
+      DISCORD_GUILD_ID: ${DISCORD_GUILD_ID:-}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8085/actuator/health | grep -q '\"status\":\"UP\"'"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 20s

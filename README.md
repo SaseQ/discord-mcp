@@ -17,7 +17,7 @@
 
 ## 📖 Description
 
-A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/introduction) server for the Discord API [(JDA)](https://jda.wiki/), 
+A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/introduction) server for the Discord API [(JDA)](https://jda.wiki/),
 allowing seamless integration of Discord Bot with MCP-compatible applications like Claude Desktop.
 
 Enable your AI assistants to seamlessly interact with Discord. Manage channels, send messages, and retrieve server information effortlessly. Enhance your Discord experience with powerful automation capabilities.
@@ -26,22 +26,33 @@ Enable your AI assistants to seamlessly interact with Discord. Manage channels, 
 ## 🔬 Installation
 
 ### ► 🐳 Docker Installation (Recommended)
-> NOTE: Docker installation is required. Full instructions can be found on [docker.com](https://www.docker.com/products/docker-desktop/).
-```json
-{
-  "mcpServers": {
-    "mcp-server": {
-      "command": "docker",
-      "args": [
-        "run", "--rm", "-i",
-        "-e", "DISCORD_TOKEN=<YOUR_DISCORD_BOT_TOKEN>",
-        "-e", "DISCORD_GUILD_ID=<OPTIONAL_DEFAULT_SERVER_ID>",
-        "saseq/discord-mcp:latest"
-      ]
-    }
-  }
-}
+
+> [!NOTE]
+> Docker installation is required. Full instructions can be found on [docker.com](https://www.docker.com/products/docker-desktop/).
+
+#### 1) Create local runtime env
+```bash
+cat > .env <<EOF
+SPRING_PROFILES_ACTIVE=http
+DISCORD_TOKEN=<YOUR_DISCORD_BOT_TOKEN>
+DISCORD_GUILD_ID=<OPTIONAL_DEFAULT_SERVER_ID>
+EOF
 ```
+
+#### 2) Start one shared MCP server container
+```bash
+docker compose up -d --build
+```
+
+#### 3) Verify
+```bash
+docker ps --filter name=discord-mcp
+curl -fsS http://localhost:8085/actuator/health
+```
+
+Default MCP endpoint URL (HTTP profile): `http://localhost:8085/mcp`
+
+Health endpoint (Actuator): `http://localhost:8085/actuator/health`
 
 <details>
     <summary style="font-size: 1.35em; font-weight: bold;">
@@ -54,70 +65,61 @@ git clone https://github.com/SaseQ/discord-mcp
 ```
 
 #### Build the project
-> NOTE: Maven installation is required to use the mvn command. Full instructions can be found [here](https://www.baeldung.com/install-maven-on-windows-linux-mac).
+> [!NOTE]
+> Maven installation is required to use the mvn command. Full instructions can be found [here](https://www.baeldung.com/install-maven-on-windows-linux-mac).
 ```bash
 cd discord-mcp
 mvn clean package # The jar file will be available in the /target directory
 ```
 
 #### Configure AI client
-Many code editors and other AI clients use a configuration file to manage MCP servers.
+Run the JAR as a long-running server:
 
-The Discord MPC server can be configured by adding the following to your configuration file.
+```bash
+DISCORD_TOKEN=<YOUR_DISCORD_BOT_TOKEN> \
+DISCORD_GUILD_ID=<OPTIONAL_DEFAULT_SERVER_ID> \
+SPRING_PROFILES_ACTIVE=http \
+java -jar /absolute/path/to/discord-mcp-1.0.0.jar
+```
 
-> NOTE: You will need to create a Discord Bot token to use this server. Instructions on how to create a Discord Bot token can be found [here](https://discordjs.guide/preparations/setting-up-a-bot-application.html#creating-your-bot).
+Then configure your MCP client to connect over HTTP to:
+
+`http://localhost:8085/mcp`
+
+> [!NOTE]
+>The `DISCORD_GUILD_ID` environment variable is optional. When provided, it sets a default Discord server ID so any tool that accepts a `guildId` parameter can omit it.
+
+</details>
+
+## 🔗 Connections
+
+### ► 🗞️ Default config.json Connection
+
+Recommended (HTTP singleton mode):
 ```json
 {
   "mcpServers": {
     "discord-mcp": {
-      "command": "java",
-      "args": [
-        "-jar",
-        "/absolute/path/to/discord-mcp-1.0.0.jar"
-      ],
-      "env": {
-        "DISCORD_TOKEN": "YOUR_DISCORD_BOT_TOKEN",
-        "DISCORD_GUILD_ID": "OPTIONAL_DEFAULT_SERVER_ID"
-      }
+      "url": "http://localhost:8085/mcp"
     }
   }
 }
 ```
-The `DISCORD_GUILD_ID` environment variable is optional. When provided, it sets a default Discord server ID so any tool that accepts a `guildId` parameter can omit it.
 
-</details>
-
-<details>
-    <summary style="font-size: 1.35em; font-weight: bold;">
-        🦞 OpenClaw Installation
-    </summary>
-
-Run this command.
-```bash
-openclaw mcp add \
-  --name discord \
-  --transport stdio \
-  --command "docker" \
-  --args "run" \
-  --args "--rm" \
-  --args "-i" \
-  --args "-e" --args "DISCORD_TOKEN=<YOUR_DISCORD_BOT_TOKEN>" \
-  --args "-e" --args "DISCORD_GUILD_ID=<OPTIONAL_DEFAULT_SERVER_ID>" \
-  --args "saseq/discord-mcp:latest"
-```
-
-OR
-
-Pasting the following configuration into your OpenClaw `~/.openclaw/config.json` or `mcp_servers.json` file.
+Legacy mode (stdio, starts a new process/container per client session):
 ```json
 {
   "mcpServers": {
-    "mcp-server": {
+    "discord-mcp": {
       "command": "docker",
       "args": [
-        "run", "--rm", "-i",
-        "-e", "DISCORD_TOKEN=<YOUR_DISCORD_BOT_TOKEN>",
-        "-e", "DISCORD_GUILD_ID=<OPTIONAL_DEFAULT_SERVER_ID>",
+        "run",
+        "--rm",
+        "-i",
+        "-e",
+        "DISCORD_TOKEN=<YOUR_DISCORD_BOT_TOKEN>",
+        "-e",
+        "DISCORD_GUILD_ID=<OPTIONAL_DEFAULT_SERVER_ID>",
         "saseq/discord-mcp:latest"
       ]
     }
@@ -125,11 +127,67 @@ Pasting the following configuration into your OpenClaw `~/.openclaw/config.json`
 }
 ```
 
+<details>
+    <summary style="font-size: 1.35em; font-weight: bold;">
+        ⌨️ Claude Code Connection
+    </summary>
+
+Recommended (HTTP singleton mode):
+```bash
+claude mcp add discord-mcp --transport http http://localhost:8085/mcp
+```
+
+Legacy mode (stdio, starts a new process/container per client session):
+```bash
+claude mcp add discord-mcp -- docker run --rm -i -e DISCORD_TOKEN=<YOUR_DISCORD_BOT_TOKEN> -e DISCORD_GUILD_ID=<OPTIONAL_DEFAULT_SERVER_ID> saseq/discord-mcp:latest
+```
+
 </details>
 
 <details>
     <summary style="font-size: 1.35em; font-weight: bold;">
-        🖲 Cursor Installation
+        🤖 Codex CLI Connection
+    </summary>
+
+```bash
+codex mcp add discord-mcp --url http://localhost:8085/mcp
+codex mcp list
+```
+
+</details>
+
+<details>
+    <summary style="font-size: 1.35em; font-weight: bold;">
+        🦞 OpenClaw Connection
+    </summary>
+
+Run this command:
+```bash
+openclaw mcp set discord-mcp '{"url":"http://localhost:8085/mcp","transport":"streamable-http"}'
+openclaw mcp list
+```
+
+OR
+
+Pasting the following configuration into your OpenClaw `~/.openclaw/config.json` file:
+```json
+{
+  "mcp": {
+    "servers": {
+      "discord-mcp": {
+        "url": "http://localhost:8085/mcp",
+        "transport": "streamable-http"
+      }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+    <summary style="font-size: 1.35em; font-weight: bold;">
+        🖲 Cursor Connection
     </summary>
 
 Go to: `Settings` -> `Cursor Settings` -> `MCP` -> `Add new global MCP server`
@@ -138,14 +196,8 @@ Pasting the following configuration into your Cursor `~/.cursor/mcp.json` file i
 ```json
 {
   "mcpServers": {
-    "mcp-server": {
-      "command": "docker",
-      "args": [
-        "run", "--rm", "-i",
-        "-e", "DISCORD_TOKEN=<YOUR_DISCORD_BOT_TOKEN>",
-        "-e", "DISCORD_GUILD_ID=<OPTIONAL_DEFAULT_SERVER_ID>",
-        "saseq/discord-mcp:latest"
-      ]
+    "discord-mcp": {
+      "url": "http://localhost:8085/mcp"
     }
   }
 }
@@ -155,65 +207,96 @@ Pasting the following configuration into your Cursor `~/.cursor/mcp.json` file i
 
 <details>
     <summary style="font-size: 1.35em; font-weight: bold;">
-        ⌨️ Claude Code Installation
+        🖥 Claude Desktop Connection
     </summary>
 
-Run this command. See [Claude Code MCP docs](https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/tutorials#set-up-model-context-protocol-mcp) for more info.
-```bash
-claude mcp add mcp-server -- docker run --rm -i -e DISCORD_TOKEN=<YOUR_DISCORD_BOT_TOKEN> -e DISCORD_GUILD_ID=<OPTIONAL_DEFAULT_SERVER_ID> saseq/discord-mcp:latest
+
+
+STDIO local config (Default, legacy):
+> [!NOTE]
+> Past the following configuration into your Claude Desktop `claude_desktop_config.json` file.
+```json
+{
+  "mcpServers": {
+    "discord-mcp": {
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "-i",
+        "-e",
+        "DISCORD_TOKEN=<YOUR_DISCORD_BOT_TOKEN>",
+        "-e",
+        "DISCORD_GUILD_ID=<OPTIONAL_DEFAULT_SERVER_ID>",
+        "saseq/discord-mcp:latest"
+      ]
+    }
+  }
+}
 ```
 
+Remote MCP Connector:
+1. Open Claude Desktop and go to `Settings` -> `Connectors`.
+2. Add a custom connector and set MCP URL to your server endpoint (for example `https://<PUBLIC_HOST>/mcp`).
+3. Save and reconnect.
+
+> [!NOTE]
+> Claude Desktop remote connectors are managed via Connectors UI (not `claude_desktop_config.json`).
+
+> [!NOTE]
+> `http://localhost:8085/mcp` is reachable only from your machine. For Claude Desktop remote connectors, expose the endpoint with public HTTPS (for example tunnel/reverse proxy).
+
 </details>
+
 
 ## 🛠️ Available Tools
 
 #### Server Information
- - [`get_server_info`](): Get detailed discord server information
+- [`get_server_info`](): Get detailed discord server information
 
 #### User Management
 - [`get_user_id_by_name`](): Get a Discord user's ID by username in a guild for ping usage `<@id>`
 - [`send_private_message`](): Send a private message to a specific user
 - [`edit_private_message`](): Edit a private message from a specific user
 - [`delete_private_message`](): Delete a private message from a specific user
-- [`read_private_messages`](): Read recent message history from a specific user (includes attachment metadata)
+- [`read_private_messages`](): Read recent message history from a specific user
 
 #### Message Management
- - [`send_message`](): Send a message to a specific channel
- - [`edit_message`](): Edit a message from a specific channel
- - [`delete_message`](): Delete a message from a specific channel
- - [`read_messages`](): Read recent message history from a specific channel (includes attachment metadata)
- - [`get_attachment`](): Get attachment metadata from a specific message
- - [`add_reaction`](): Add a reaction (emoji) to a specific message
- - [`remove_reaction`](): Remove a specified reaction (emoji) from a message
+- [`send_message`](): Send a message to a specific channel
+- [`edit_message`](): Edit a message from a specific channel
+- [`delete_message`](): Delete a message from a specific channel
+- [`read_messages`](): Read recent message history from a specific channel
+- [`add_reaction`](): Add a reaction (emoji) to a specific message
+- [`remove_reaction`](): Remove a specified reaction (emoji) from a message
 
 #### Channel Management
- - [`create_text_channel`](): Create a new text channel
- - [`edit_text_channel`](): Edit settings of a text channel (name, topic, nsfw, slowmode, category, position)
- - [`delete_channel`](): Delete a channel
- - [`find_channel`](): Find a channel type and ID using name and server ID
- - [`list_channels`](): List of all channels
- - [`get_channel_info`](): Get detailed information about a channel
- - [`move_channel`](): Move a channel to another category and/or change its position
+- [`create_text_channel`](): Create a new text channel
+- [`edit_text_channel`](): Edit settings of a text channel (name, topic, nsfw, slowmode, category, position)
+- [`delete_channel`](): Delete a channel
+- [`find_channel`](): Find a channel type and ID using name and server ID
+- [`list_channels`](): List of all channels
+- [`get_channel_info`](): Get detailed information about a channel
+- [`move_channel`](): Move a channel to another category and/or change its position
 
 #### Category Management
- - [`create_category`](): Create a new category for channels
- - [`delete_category`](): Delete a category
- - [`find_category`](): Find a category ID using name and server ID
- - [`list_channels_in_category`](): List of channels in a specific category
+- [`create_category`](): Create a new category for channels
+- [`delete_category`](): Delete a category
+- [`find_category`](): Find a category ID using name and server ID
+- [`list_channels_in_category`](): List of channels in a specific category
 
 #### Webhook Management
- - [`create_webhook`](): Create a new webhook on a specific channel
- - [`delete_webhook`](): Delete a webhook
- - [`list_webhooks`](): List of webhooks on a specific channel
- - [`send_webhook_message`](): Send a message via webhook
+- [`create_webhook`](): Create a new webhook on a specific channel
+- [`delete_webhook`](): Delete a webhook
+- [`list_webhooks`](): List of webhooks on a specific channel
+- [`send_webhook_message`](): Send a message via webhook
 
 #### Role Management
- - [`list_roles`](): Get a list of all roles on the server with their details
- - [`create_role`](): Create a new role on the server
- - [`edit_role`](): Modify an existing role's settings
- - [`delete_role`](): Permanently delete a role from the server
- - [`assign_role`](): Assign a role to a user
- - [`remove_role`](): Remove a role from a user
+- [`list_roles`](): Get a list of all roles on the server with their details
+- [`create_role`](): Create a new role on the server
+- [`edit_role`](): Modify an existing role's settings
+- [`delete_role`](): Permanently delete a role from the server
+- [`assign_role`](): Assign a role to a user
+- [`remove_role`](): Remove a role from a user
 
 #### Moderation and User Management
 - [`kick_member`](): Kicks a member from the server
