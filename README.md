@@ -49,6 +49,33 @@ The MCP transport is **STREAMABLE_HTTP** (`spring.ai.mcp.server.protocol=STREAMA
 
 > NOTE: You will need to create a Discord Bot token to use this server. Instructions on how to create a Discord Bot token can be found [here](https://discordjs.guide/preparations/setting-up-a-bot-application.html#creating-your-bot).
 
+#### Docker Compose example
+
+The healthcheck endpoint at `/actuator/health` can be used to check the server status, enrusing that the server is running and accepting connections before starting services that depend on it.
+
+```yaml
+services:
+  discord-mcp:
+    build:
+      context: ./discord-mcp
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8085/actuator/health | grep -q UP"]
+      interval: 60s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  your_app:
+    restart: unless-stopped
+    depends_on:
+      discord-mcp:
+        condition: service_healthy
+```
+
 <details>
     <summary style="font-size: 1.35em; font-weight: bold;">
         🔧 Manual Installation
