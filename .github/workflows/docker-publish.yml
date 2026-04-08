@@ -1,0 +1,115 @@
+name: Publish Docker Image
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: "Release version without v prefix (example: 1.1.0)"
+        required: true
+        type: string
+      push_latest:
+        description: "Also update latest tag"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: saseq/discord-mcp
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Resolve target tags
+        id: resolve_tags
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+          DISPATCH_VERSION: ${{ github.event.inputs.release_version }}
+          DISPATCH_PUSH_LATEST: ${{ github.event.inputs.push_latest }}
+        run: |
+          set -euo pipefail
+
+          tags=()
+
+          if [[ "$EVENT_NAME" == "push" ]]; then
+            if [[ "$REF" == "refs/heads/main" ]]; then
+              tags+=("latest")
+            elif [[ "$REF" == refs/tags/v* ]]; then
+              version="${REF_NAME#v}"
+              tags+=("${version}")
+            fi
+          elif [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            if [[ -z "$DISPATCH_VERSION" ]]; then
+              echo "release_version is required for workflow_dispatch"
+              exit 1
+            fi
+
+            if [[ ! "$DISPATCH_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+              echo "release_version must match X.Y.Z or X.Y.Z-suffix"
+              exit 1
+            fi
+
+            tags+=("$DISPATCH_VERSION")
+
+            if [[ "$DISPATCH_PUSH_LATEST" == "true" ]]; then
+              tags+=("latest")
+            fi
+          fi
+
+          if [[ "${#tags[@]}" -eq 0 ]]; then
+            echo "No docker tags resolved for this event"
+            exit 1
+          fi
+
+          {
+            echo "tags<<EOF"
+            for tag in "${tags[@]}"; do
+              echo "type=raw,value=${tag}"
+            done
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: ${{ steps.resolve_tags.outputs.tags }}
+
+      - name: Build and push multi-arch image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
