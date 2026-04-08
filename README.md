@@ -26,7 +26,9 @@ Enable your AI assistants to seamlessly interact with Discord. Manage channels, 
 ## 🔬 Installation
 
 ### ► 🐳 Docker Installation (Recommended)
+
 > NOTE: Docker installation is required. Full instructions can be found on [docker.com](https://www.docker.com/products/docker-desktop/).
+
 ```json
 {
   "mcpServers": {
@@ -42,6 +44,10 @@ Enable your AI assistants to seamlessly interact with Discord. Manage channels, 
   }
 }
 ```
+
+The MCP transport is **STREAMABLE_HTTP** (`spring.ai.mcp.server.protocol=STREAMABLE`). The server listens on port `8085` and exposes its endpoint at `/mcp`.
+
+> NOTE: You will need to create a Discord Bot token to use this server. Instructions on how to create a Discord Bot token can be found [here](https://discordjs.guide/preparations/setting-up-a-bot-application.html#creating-your-bot).
 
 <details>
     <summary style="font-size: 1.35em; font-weight: bold;">
@@ -65,7 +71,7 @@ Many code editors and other AI clients use a configuration file to manage MCP se
 
 The Discord MPC server can be configured by adding the following to your configuration file.
 
-> NOTE: You will need to create a Discord Bot token to use this server. Instructions on how to create a Discord Bot token can be found [here](https://discordjs.guide/preparations/setting-up-a-bot-application.html#creating-your-bot).
+[here](https://discordjs.guide/preparations/setting-up-a-bot-application.html#creating-your-bot).
 ```json
 {
   "mcpServers": {
