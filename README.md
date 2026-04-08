@@ -65,8 +65,9 @@ git clone https://github.com/SaseQ/discord-mcp
 ```
 
 #### Build the project
-> [!NOTE]
-> Maven installation is required to use the mvn command. Full instructions can be found [here](https://www.baeldung.com/install-maven-on-windows-linux-mac).
+
+> NOTE: Maven installation is required to use the mvn command. Full instructions can be found [here](https://www.baeldung.com/install-maven-on-windows-linux-mac).
+
 ```bash
 cd discord-mcp
 mvn clean package # The jar file will be available in the /target directory
@@ -86,8 +87,7 @@ Then configure your MCP client to connect over HTTP to:
 
 `http://localhost:8085/mcp`
 
-> [!NOTE]
->The `DISCORD_GUILD_ID` environment variable is optional. When provided, it sets a default Discord server ID so any tool that accepts a `guildId` parameter can omit it.
+> NOTE: The `DISCORD_GUILD_ID` environment variable is optional. When provided, it sets a default Discord server ID so any tool that accepts a `guildId` parameter can omit it.
 
 </details>
 
@@ -213,7 +213,6 @@ Pasting the following configuration into your Cursor `~/.cursor/mcp.json` file i
 
 
 STDIO local config (Default, legacy):
-> [!NOTE]
 > Past the following configuration into your Claude Desktop `claude_desktop_config.json` file.
 ```json
 {
@@ -240,10 +239,7 @@ Remote MCP Connector:
 2. Add a custom connector and set MCP URL to your server endpoint (for example `https://<PUBLIC_HOST>/mcp`).
 3. Save and reconnect.
 
-> [!NOTE]
 > Claude Desktop remote connectors are managed via Connectors UI (not `claude_desktop_config.json`).
-
-> [!NOTE]
 > `http://localhost:8085/mcp` is reachable only from your machine. For Claude Desktop remote connectors, expose the endpoint with public HTTPS (for example tunnel/reverse proxy).
 
 </details>
