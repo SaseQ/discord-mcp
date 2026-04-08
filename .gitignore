@@ -43,3 +43,8 @@ AGENTS.md
 
 # Local runtime secrets
 .env
+
+# Local docs/spec drafts (not part of release commits)
+ai-docs/
+issues/
+wiki/
