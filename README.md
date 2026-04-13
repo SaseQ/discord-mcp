@@ -17,10 +17,9 @@
 
 ## 📖 Description
 
-A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/introduction) server for the Discord API [(JDA)](https://jda.wiki/),
-allowing seamless integration of Discord Bot with MCP-compatible applications like Claude Desktop.
-
-Enable your AI assistants to seamlessly interact with Discord. Manage channels, send messages, and retrieve server information effortlessly. Enhance your Discord experience with powerful automation capabilities.
+A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/introduction) server for the Discord API using [(JDA)](https://jda.wiki/),
+designed to integrate Discord bots with MCP-compatible applications such as Claude, ChatGPT etc. It allows AI assistants to interact with 
+Discord by managing channels, sending messages, and retrieving server information. Ideal for building powerful Discord automation and AI-driven workflows.
 
 
 ## 🔬 Installation
@@ -30,7 +29,51 @@ Enable your AI assistants to seamlessly interact with Discord. Manage channels, 
 > [!NOTE]
 > Docker installation is required. Full instructions can be found on [docker.com](https://www.docker.com/products/docker-desktop/).
 
-#### 1) Create local runtime env
+#### 1) Set local env variables
+```bash
+export DISCORD_TOKEN="YOUR_DISCORD_BOT_TOKEN"
+export DISCORD_GUILD_ID="OPTIONAL_DEFAULT_SERVER_ID"
+export SPRING_PROFILES_ACTIVE=http
+```
+
+> [!IMPORTANT]
+> Instructions for creating a Discord bot and retrieving its token can be found [here](https://discordjs.guide/legacy/preparations/app-setup).
+
+> [!TIP]
+> The `DISCORD_GUILD_ID` env variable is optional.
+> 
+> When provided, it sets a default Discord server ID so any tool that accepts a `guildId` parameter can omit it.
+
+#### 2) Run the Docker container
+```bash
+docker run -d -i \
+  --name discord-mcp \
+  --restart unless-stopped \
+  -p 8085:8085 \
+  -e SPRING_PROFILES_ACTIVE \
+  -e DISCORD_TOKEN \
+  -e DISCORD_GUILD_ID \
+  saseq/discord-mcp:latest
+```
+
+Default MCP endpoint URL (HTTP profile): `http://localhost:8085/mcp`
+
+<details>
+    <summary style="font-size: 1.35em; font-weight: bold;">
+        🐋 Docker Compose Installation
+    </summary>
+
+#### 1) Clone the repository
+```bash
+git clone https://github.com/SaseQ/discord-mcp
+```
+
+#### 2) Go to the project directory
+```bash
+cd discord-mcp
+```
+
+#### 3) Create local runtime env
 ```bash
 cat > .env <<EOF
 SPRING_PROFILES_ACTIVE=http
@@ -39,12 +82,12 @@ DISCORD_GUILD_ID=<OPTIONAL_DEFAULT_SERVER_ID>
 EOF
 ```
 
-#### 2) Start one shared MCP server container
+#### 4) Start one shared MCP server container
 ```bash
 docker compose up -d --build
 ```
 
-#### 3) Verify
+#### 5) Verify
 ```bash
 docker ps --filter name=discord-mcp
 curl -fsS http://localhost:8085/actuator/health
@@ -54,17 +97,19 @@ Default MCP endpoint URL (HTTP profile): `http://localhost:8085/mcp`
 
 Health endpoint (Actuator): `http://localhost:8085/actuator/health`
 
+</details>
+
 <details>
     <summary style="font-size: 1.35em; font-weight: bold;">
         🔧 Manual Installation
     </summary>
 
-#### Clone the repository
+#### 1) Clone the repository
 ```bash
 git clone https://github.com/SaseQ/discord-mcp
 ```
 
-#### Build the project
+#### 2) Build the project
 
 > NOTE: Maven installation is required to use the mvn command. Full instructions can be found [here](https://www.baeldung.com/install-maven-on-windows-linux-mac).
 
@@ -73,7 +118,7 @@ cd discord-mcp
 mvn clean package # The jar file will be available in the /target directory
 ```
 
-#### Configure AI client
+#### 3) Configure AI client
 Run the JAR as a long-running server:
 
 ```bash
@@ -83,11 +128,9 @@ SPRING_PROFILES_ACTIVE=http \
 java -jar /absolute/path/to/discord-mcp-1.0.0.jar
 ```
 
-Then configure your MCP client to connect over HTTP to:
-
-`http://localhost:8085/mcp`
-
 > NOTE: The `DISCORD_GUILD_ID` environment variable is optional. When provided, it sets a default Discord server ID so any tool that accepts a `guildId` parameter can omit it.
+
+Default MCP endpoint URL (HTTP profile): `http://localhost:8085/mcp`
 
 </details>
 
@@ -255,13 +298,13 @@ Remote MCP Connector:
 - [`send_private_message`](): Send a private message to a specific user
 - [`edit_private_message`](): Edit a private message from a specific user
 - [`delete_private_message`](): Delete a private message from a specific user
-- [`read_private_messages`](): Read recent message history from a specific user
+- [`read_private_messages`](): Read recent message history from a specific user (includes attachment metadata)
 
 #### Message Management
 - [`send_message`](): Send a message to a specific channel
 - [`edit_message`](): Edit a message from a specific channel
 - [`delete_message`](): Delete a message from a specific channel
-- [`read_messages`](): Read recent message history from a specific channel
+- [`read_messages`](): Read recent message history from a specific channel (includes attachment metadata)
 - [`add_reaction`](): Add a reaction (emoji) to a specific message
 - [`remove_reaction`](): Remove a specified reaction (emoji) from a message
 
