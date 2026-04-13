@@ -250,6 +250,24 @@ Pasting the following configuration into your Cursor `~/.cursor/mcp.json` file i
 
 <details>
     <summary style="font-size: 1.35em; font-weight: bold;">
+        🚀 n8n Connection
+    </summary>
+
+#### Connect in n8n
+1. Open n8n and add an **MCP Client** node.
+2. Choose **HTTP** or **Streamable HTTP** transport (depending on your n8n version/node options).
+3. Set the server URL to: `http://localhost:8085/mcp`
+4. Save the node and test the connection.
+5. After connecting, you can use the available Discord tools exposed by `discord-mcp` inside your workflow.
+
+#### Notes
+- If n8n is running in Docker, `localhost` may point to the n8n container itself, not your host machine.
+- In that case, use the Docker service name or another reachable host, for example: `http://discord-mcp:8085/mcp`
+
+</details>
+
+<details>
+    <summary style="font-size: 1.35em; font-weight: bold;">
         🖥 Claude Desktop Connection
     </summary>
 
