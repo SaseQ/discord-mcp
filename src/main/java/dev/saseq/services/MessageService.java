@@ -2,6 +2,7 @@ package dev.saseq.services;
 
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.entities.Message;
+import net.dv8tion.jda.api.entities.channel.concrete.NewsChannel;
 import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
 import net.dv8tion.jda.api.entities.channel.concrete.ThreadChannel;
 import net.dv8tion.jda.api.entities.channel.middleman.MessageChannel;
@@ -30,6 +31,11 @@ public class MessageService {
         TextChannel textChannel = jda.getTextChannelById(channelId);
         if (textChannel != null) {
             return textChannel;
+        }
+        // Then try news/announcement channel
+        NewsChannel newsChannel = jda.getNewsChannelById(channelId);
+        if (newsChannel != null) {
+            return newsChannel;
         }
         // Then try thread channel
         ThreadChannel threadChannel = jda.getThreadChannelById(channelId);
