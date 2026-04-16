@@ -94,6 +94,38 @@ public class CategoryService {
      * @param categoryName The name of the category to find.
      * @return A message containing the name and ID of the found category.
      */
+    @Tool(name = "edit_category", description = "Edit a category (rename or move position)")
+    public String editCategory(@ToolParam(description = "Discord server ID", required = false) String guildId,
+                               @ToolParam(description = "Discord category ID") String categoryId,
+                               @ToolParam(description = "New category name", required = false) String name,
+                               @ToolParam(description = "New position in channel list", required = false) String position,
+                               @ToolParam(description = "Reason for audit log", required = false) String reason) {
+        guildId = resolveGuildId(guildId);
+        if (guildId == null || guildId.isEmpty()) {
+            throw new IllegalArgumentException("guildId cannot be null");
+        }
+        if (categoryId == null || categoryId.isEmpty()) {
+            throw new IllegalArgumentException("categoryId cannot be null");
+        }
+        Guild guild = jda.getGuildById(guildId);
+        if (guild == null) {
+            throw new IllegalArgumentException("Discord server not found by guildId");
+        }
+        Category category = guild.getCategoryById(categoryId);
+        if (category == null) {
+            throw new IllegalArgumentException("Category not found by categoryId");
+        }
+        if ((name == null || name.isEmpty()) && (position == null || position.isEmpty())) {
+            throw new IllegalArgumentException("At least one of 'name' or 'position' must be provided");
+        }
+        var manager = category.getManager();
+        if (name != null && !name.isEmpty()) manager.setName(name);
+        if (position != null && !position.isEmpty()) manager.setPosition(Integer.parseInt(position));
+        if (reason != null && !reason.isEmpty()) manager.reason(reason);
+        manager.complete();
+        return "Updated category: " + category.getName() + " (ID: " + category.getId() + ")";
+    }
+
     @Tool(name = "find_category", description = "Find a category ID using name and server ID")
     public String findCategory(@ToolParam(description = "Discord server ID", required = false) String guildId,
                                @ToolParam(description = "Discord category name") String categoryName) {

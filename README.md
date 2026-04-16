@@ -337,6 +337,7 @@ Remote MCP Connector:
 
 #### Category Management
 - [`create_category`](): Create a new category for channels
+- [`edit_category`](): Edit a category (rename or move position)
 - [`delete_category`](): Delete a category
 - [`find_category`](): Find a category ID using name and server ID
 - [`list_channels_in_category`](): List of channels in a specific category
@@ -390,6 +391,16 @@ Remote MCP Connector:
 - [`list_invites`](): List all active invites on the server with their statistics
 - [`delete_invite`](): Delete (revoke) an invite so the link stops working
 - [`get_invite_details`](): Get details about a specific invite (works for any public invite)
+
+#### Forum Management
+- [`create_forum_channel`](): Create a new forum channel
+- [`edit_forum_channel`](): Edit settings of a forum channel (name, topic, nsfw, slowmode, category, position, default sort, default layout)
+- [`list_forum_channels`](): List all forum channels in the server
+- [`get_forum_channel_info`](): Get detailed information about a forum channel including tags and settings
+- [`list_forum_tags`](): List all available tags in a forum channel
+- [`create_forum_post`](): Create a new forum post (thread) with an initial message in a forum channel
+- [`list_forum_posts`](): List active posts (threads) in a forum channel
+- [`modify_forum_post`](): Modify a forum post: lock/unlock, archive/unarchive, pin/unpin, or change applied tags
 
 #### Emoji Management
 - [`list_emojis`](): List all custom emojis on the server
