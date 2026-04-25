@@ -93,6 +93,10 @@ docker ps --filter name=discord-mcp
 curl -fsS http://localhost:8085/actuator/health
 ```
 
+> [!TIP]
+> You do not need to set `LOGGING_PATTERN_CONSOLE` manually.
+> Logging is configured automatically for both `http` and legacy `stdio` modes.
+
 Default MCP endpoint URL (HTTP profile): `http://localhost:8085/mcp`
 
 Health endpoint (Actuator): `http://localhost:8085/actuator/health`
