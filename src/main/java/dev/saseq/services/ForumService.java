@@ -51,6 +51,14 @@ public class ForumService {
         return forum;
     }
 
+    private ThreadChannel retrieveThreadChannelById(Guild guild, String postId) {
+        ThreadChannel thread = guild.getThreadChannelById(postId);
+        if (thread != null) {
+            return thread;
+        }
+        throw new IllegalArgumentException("Forum post not found by postId");
+    }
+
     @Tool(name = "create_forum_channel", description = "Create a new forum channel")
     public String createForumChannel(@ToolParam(description = "Discord server ID", required = false) String guildId,
                                      @ToolParam(description = "Channel name") String name,
@@ -89,6 +97,17 @@ public class ForumService {
                                    @ToolParam(description = "Reason for audit log", required = false) String reason) {
         Guild guild = getGuild(guildId);
         ForumChannel forum = resolveForumChannel(guild, channelId);
+        boolean hasEditableField = (name != null && !name.isEmpty())
+                || topic != null
+                || (nsfw != null && !nsfw.isEmpty())
+                || (slowmode != null && !slowmode.isEmpty())
+                || categoryId != null
+                || (position != null && !position.isEmpty())
+                || (defaultSort != null && !defaultSort.isEmpty())
+                || (defaultLayout != null && !defaultLayout.isEmpty());
+        if (!hasEditableField) {
+            throw new IllegalArgumentException("At least one forum channel field must be provided");
+        }
         var manager = forum.getManager();
         if (name != null && !name.isEmpty()) manager.setName(name);
         if (topic != null) manager.setTopic(topic);
@@ -238,8 +257,7 @@ public class ForumService {
                                   @ToolParam(description = "Reason for audit log", required = false) String reason) {
         Guild guild = getGuild(guildId);
         if (postId == null || postId.isEmpty()) throw new IllegalArgumentException("postId cannot be null");
-        ThreadChannel thread = guild.getThreadChannelById(postId);
-        if (thread == null) throw new IllegalArgumentException("Forum post not found by postId");
+        ThreadChannel thread = retrieveThreadChannelById(guild, postId);
         if (!(thread.getParentChannel() instanceof ForumChannel)) {
             throw new IllegalArgumentException("Thread is not inside a forum channel");
         }
