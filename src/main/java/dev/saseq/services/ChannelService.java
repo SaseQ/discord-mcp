@@ -6,6 +6,8 @@ import net.dv8tion.jda.api.entities.channel.concrete.Category;
 import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
 import net.dv8tion.jda.api.entities.channel.concrete.VoiceChannel;
 import net.dv8tion.jda.api.entities.channel.middleman.GuildChannel;
+import net.dv8tion.jda.api.entities.channel.middleman.StandardGuildChannel;
+import net.dv8tion.jda.api.entities.channel.middleman.StandardGuildMessageChannel;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.beans.factory.annotation.Value;
@@ -118,26 +120,47 @@ public class ChannelService {
         Guild guild = getGuild(guildId);
         if (channelId == null || channelId.isEmpty()) throw new IllegalArgumentException("channelId cannot be null");
         GuildChannel guildChannel = guild.getGuildChannelById(channelId);
-        if (!(guildChannel instanceof TextChannel channel)) {
-            throw new IllegalArgumentException("Channel not found or is not a text channel");
-        }
-        var manager = channel.getManager();
-        if (name != null && !name.isEmpty()) manager.setName(name);
-        if (topic != null) manager.setTopic(topic);
-        if (nsfw != null && !nsfw.isEmpty()) manager.setNSFW(Boolean.parseBoolean(nsfw));
-        if (slowmode != null && !slowmode.isEmpty()) manager.setSlowmode(Integer.parseInt(slowmode));
-        if (categoryId != null) {
-            if (categoryId.isEmpty()) manager.setParent(null);
-            else {
-                Category category = guild.getCategoryById(categoryId);
-                if (category == null) throw new IllegalArgumentException("Category not found by categoryId");
-                manager.setParent(category);
+        if (guildChannel instanceof TextChannel channel) {
+            var manager = channel.getManager();
+            if (name != null && !name.isEmpty()) manager.setName(name);
+            if (topic != null) manager.setTopic(topic);
+            if (nsfw != null && !nsfw.isEmpty()) manager.setNSFW(Boolean.parseBoolean(nsfw));
+            if (slowmode != null && !slowmode.isEmpty()) manager.setSlowmode(Integer.parseInt(slowmode));
+            if (categoryId != null) {
+                if (categoryId.isEmpty()) manager.setParent(null);
+                else {
+                    Category category = guild.getCategoryById(categoryId);
+                    if (category == null) throw new IllegalArgumentException("Category not found by categoryId");
+                    manager.setParent(category);
+                }
             }
+            if (position != null && !position.isEmpty()) manager.setPosition(Integer.parseInt(position));
+            if (reason != null && !reason.isEmpty()) manager.reason(reason);
+            manager.complete();
+            return "Updated text channel: " + channel.getName() + " (ID: " + channelId + ")";
         }
-        if (position != null && !position.isEmpty()) manager.setPosition(Integer.parseInt(position));
-        if (reason != null && !reason.isEmpty()) manager.reason(reason);
-        manager.complete();
-        return "Updated text channel: " + channel.getName() + " (ID: " + channelId + ")";
+        if (guildChannel instanceof StandardGuildMessageChannel channel) {
+            if (slowmode != null && !slowmode.isEmpty()) {
+                throw new IllegalArgumentException("slowmode is supported only for text channels");
+            }
+            var manager = channel.getManager();
+            if (name != null && !name.isEmpty()) manager.setName(name);
+            if (topic != null) manager.setTopic(topic);
+            if (nsfw != null && !nsfw.isEmpty()) manager.setNSFW(Boolean.parseBoolean(nsfw));
+            if (categoryId != null) {
+                if (categoryId.isEmpty()) manager.setParent(null);
+                else {
+                    Category category = guild.getCategoryById(categoryId);
+                    if (category == null) throw new IllegalArgumentException("Category not found by categoryId");
+                    manager.setParent(category);
+                }
+            }
+            if (position != null && !position.isEmpty()) manager.setPosition(Integer.parseInt(position));
+            if (reason != null && !reason.isEmpty()) manager.reason(reason);
+            manager.complete();
+            return "Updated " + channel.getType().name() + " channel: " + channel.getName() + " (ID: " + channelId + ")";
+        }
+        throw new IllegalArgumentException("Channel not found or is not a standard text/news channel");
     }
 
     @Tool(name = "get_channel_info", description = "Get detailed information about a channel")
@@ -189,8 +212,8 @@ public class ChannelService {
         Guild guild = getGuild(guildId);
         if (channelId == null || channelId.isEmpty()) throw new IllegalArgumentException("channelId cannot be null");
         GuildChannel guildChannel = guild.getGuildChannelById(channelId);
-        if (!(guildChannel instanceof TextChannel channel)) {
-            throw new IllegalArgumentException("Channel not found or is not a text channel");
+        if (!(guildChannel instanceof StandardGuildChannel channel)) {
+            throw new IllegalArgumentException("Channel not found or cannot be moved");
         }
         var manager = channel.getManager();
         if (categoryId != null) {
