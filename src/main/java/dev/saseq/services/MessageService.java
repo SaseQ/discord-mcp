@@ -134,30 +134,84 @@ public class MessageService {
     }
 
     /**
-     * Reads the recent message history from a specified Discord channel.
+     * Reads message history from a specified Discord channel.
      *
      * @param channelId The ID of the channel from which to read messages.
-     * @param count     Optional number of messages to retrieve (default is 100).
+     * @param count     Optional number of messages to retrieve (default is 100, max is 100).
+     * @param before    Optional message ID to fetch messages before this message.
+     * @param after     Optional message ID to fetch messages after this message.
+     * @param around    Optional message ID to fetch messages around this message.
      * @return A formatted string containing the retrieved messages.
      */
-    @Tool(name = "read_messages", description = "Read recent message history from a specific channel")
+    @Tool(name = "read_messages", description = "Read message history from a specific channel, optionally paginated with before/after/around")
     public String readMessages(@ToolParam(description = "Discord channel ID") String channelId,
-                               @ToolParam(description = "Number of messages to retrieve", required = false) String count) {
+                               @ToolParam(description = "Number of messages to retrieve (1-100)", required = false) String count,
+                               @ToolParam(description = "Message ID to fetch messages before this message", required = false) String before,
+                               @ToolParam(description = "Message ID to fetch messages after this message", required = false) String after,
+                               @ToolParam(description = "Message ID to fetch messages around this message", required = false) String around) {
         if (channelId == null || channelId.isEmpty()) {
             throw new IllegalArgumentException("channelId cannot be null");
         }
-        int limit = 100;
-        if (count != null) {
-            limit = Integer.parseInt(count);
-        }
+        int limit = parseMessageLimit(count);
+        validateCursorParameters(before, after, around);
 
         MessageChannel channel = getMessageChannelById(channelId);
         if (channel == null) {
             throw new IllegalArgumentException("Channel not found by channelId");
         }
-        List<Message> messages = channel.getHistory().retrievePast(limit).complete();
+        List<Message> messages;
+        if (isProvided(before)) {
+            messages = channel.getHistoryBefore(before, limit).complete().getRetrievedHistory();
+        } else if (isProvided(after)) {
+            messages = channel.getHistoryAfter(after, limit).complete().getRetrievedHistory();
+        } else if (isProvided(around)) {
+            messages = channel.getHistoryAround(around, limit).complete().getRetrievedHistory();
+        } else {
+            messages = channel.getHistory().retrievePast(limit).complete();
+        }
         List<String> formatedMessages = formatMessages(messages);
         return "**Retrieved " + messages.size() + " messages:** \n" + String.join("\n", formatedMessages);
+    }
+
+    private int parseMessageLimit(String count) {
+        if (count == null || count.isBlank()) {
+            return 100;
+        }
+
+        int limit;
+        try {
+            limit = Integer.parseInt(count);
+        } catch (NumberFormatException ex) {
+            throw new IllegalArgumentException("count must be an integer between 1 and 100");
+        }
+
+        if (limit < 1 || limit > 100) {
+            throw new IllegalArgumentException("count must be between 1 and 100");
+        }
+        return limit;
+    }
+
+    private void validateCursorParameters(String before, String after, String around) {
+        if (before != null && before.isBlank()) {
+            throw new IllegalArgumentException("before cannot be blank");
+        }
+        if (after != null && after.isBlank()) {
+            throw new IllegalArgumentException("after cannot be blank");
+        }
+        if (around != null && around.isBlank()) {
+            throw new IllegalArgumentException("around cannot be blank");
+        }
+
+        int providedCursors = (isProvided(before) ? 1 : 0)
+                + (isProvided(after) ? 1 : 0)
+                + (isProvided(around) ? 1 : 0);
+        if (providedCursors > 1) {
+            throw new IllegalArgumentException("before, after, and around are mutually exclusive; provide only one");
+        }
+    }
+
+    private boolean isProvided(String value) {
+        return value != null && !value.isBlank();
     }
 
     /**
