@@ -10,8 +10,11 @@ import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Objects;
+import java.util.Locale;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @Service
@@ -31,6 +34,18 @@ public class UserService {
             return defaultGuildId;
         }
         return guildId;
+    }
+
+    private Guild getGuild(String guildId) {
+        guildId = resolveGuildId(guildId);
+        if (guildId == null || guildId.isEmpty()) {
+            throw new IllegalArgumentException("guildId cannot be null");
+        }
+        Guild guild = jda.getGuildById(guildId);
+        if (guild == null) {
+            throw new IllegalArgumentException("Discord server not found by guildId");
+        }
+        return guild;
     }
 
     /**
@@ -78,6 +93,93 @@ public class UserService {
             throw new IllegalArgumentException("Multiple users found with username '" + username + "'. List: " + userList + ". Please specify the full username#discriminator.");
         }
         return members.get(0).getUser().getId();
+    }
+
+    /**
+     * Retrieves a guild member by Discord user ID.
+     *
+     * @param userId  Discord user ID.
+     * @param guildId Optional guild/server ID; uses default if not provided.
+     * @return Member identity details if found.
+     */
+    @Tool(name = "get_member_by_id", description = "Get a Discord guild member by stable user ID, including username, global name, nickname, effective name, and roles.")
+    public String getMemberById(
+            @ToolParam(description = "Discord user ID") String userId,
+            @ToolParam(description = "Discord server ID", required = false) String guildId) {
+        if (userId == null || userId.isEmpty()) {
+            throw new IllegalArgumentException("userId cannot be null");
+        }
+        Guild guild = getGuild(guildId);
+        Member member = retrieveMemberById(guild, userId, true);
+        if (member == null) {
+            throw new IllegalArgumentException("No guild member found with userId " + userId);
+        }
+        return formatMemberDetail(member);
+    }
+
+    /**
+     * Searches guild members by ID, username, global name, nickname, or effective name.
+     *
+     * @param query   Search text or Discord user ID.
+     * @param count   Optional max candidates to return (default 25, max 100).
+     * @param guildId Optional guild/server ID; uses default if not provided.
+     * @return Candidate member identity details.
+     */
+    @Tool(name = "search_members", description = "Search Discord guild members by ID, username, global name, nickname, or effective name. Returns candidates with stable user IDs for reconciliation.")
+    public String searchMembers(
+            @ToolParam(description = "Search query or Discord user ID") String query,
+            @ToolParam(description = "Maximum candidates to return (1-100)", required = false) String count,
+            @ToolParam(description = "Discord server ID", required = false) String guildId) {
+        if (query == null || query.isBlank()) {
+            throw new IllegalArgumentException("query cannot be null");
+        }
+
+        Guild guild = getGuild(guildId);
+        int limit = parseMemberLimit(count);
+        String trimmedQuery = query.trim();
+        Map<String, Member> candidates = new LinkedHashMap<>();
+
+        if (isDiscordSnowflake(trimmedQuery)) {
+            Member exactMember = retrieveMemberById(guild, trimmedQuery, true);
+            if (exactMember != null) {
+                candidates.put(exactMember.getId(), exactMember);
+            }
+        }
+
+        if (candidates.size() < limit) {
+            for (Member member : guild.getMemberCache()) {
+                if (memberMatches(member, trimmedQuery)) {
+                    candidates.put(member.getId(), member);
+                }
+                if (candidates.size() >= limit) {
+                    break;
+                }
+            }
+        }
+
+        if (candidates.size() < limit) {
+            try {
+                List<Member> prefixMatches = guild.retrieveMembersByPrefix(trimmedQuery, limit).get();
+                for (Member member : prefixMatches) {
+                    candidates.put(member.getId(), member);
+                    if (candidates.size() >= limit) {
+                        break;
+                    }
+                }
+            } catch (RuntimeException ignored) {
+                // Return exact/cache matches even if live prefix lookup is unavailable.
+            }
+        }
+
+        if (candidates.isEmpty()) {
+            return "No members found for query " + trimmedQuery;
+        }
+
+        List<String> formattedMembers = new ArrayList<>();
+        for (Member member : candidates.values()) {
+            formattedMembers.add(formatMemberSummary(member, false));
+        }
+        return "**Found " + formattedMembers.size() + " member candidate(s):**\n" + String.join("\n", formattedMembers);
     }
 
     /**
@@ -251,24 +353,107 @@ public class UserService {
     }
 
     private User getUserById(String userId) {
-        return jda.getGuilds().stream()
-                .map(guild -> guild.retrieveMemberById(userId).complete())
-                .filter(Objects::nonNull)
-                .map(Member::getUser)
-                .findFirst()
-                .orElse(null);
+        for (Guild guild : jda.getGuilds()) {
+            Member member = retrieveMemberById(guild, userId, true);
+            if (member != null) {
+                return member.getUser();
+            }
+        }
+        return null;
+    }
+
+    private Member retrieveMemberById(Guild guild, String userId, boolean refresh) {
+        try {
+            return guild.retrieveMemberById(userId).useCache(!refresh).complete();
+        } catch (RuntimeException ex) {
+            return null;
+        }
+    }
+
+    private int parseMemberLimit(String count) {
+        if (count == null || count.isBlank()) {
+            return 25;
+        }
+
+        int limit;
+        try {
+            limit = Integer.parseInt(count);
+        } catch (NumberFormatException ex) {
+            throw new IllegalArgumentException("count must be an integer between 1 and 100");
+        }
+
+        if (limit < 1 || limit > 100) {
+            throw new IllegalArgumentException("count must be between 1 and 100");
+        }
+        return limit;
+    }
+
+    private boolean isDiscordSnowflake(String value) {
+        return value.matches("\\d{17,20}");
+    }
+
+    private boolean memberMatches(Member member, String query) {
+        String normalizedQuery = query.toLowerCase(Locale.ROOT);
+        return containsIgnoreCase(member.getId(), normalizedQuery)
+                || containsIgnoreCase(member.getUser().getName(), normalizedQuery)
+                || containsIgnoreCase(member.getUser().getGlobalName(), normalizedQuery)
+                || containsIgnoreCase(member.getNickname(), normalizedQuery)
+                || containsIgnoreCase(member.getEffectiveName(), normalizedQuery);
+    }
+
+    private boolean containsIgnoreCase(String value, String normalizedQuery) {
+        return value != null && value.toLowerCase(Locale.ROOT).contains(normalizedQuery);
+    }
+
+    private String formatMemberDetail(Member member) {
+        return "**Member found:**\n" + formatMemberSummary(member, true);
+    }
+
+    private String formatMemberSummary(Member member, boolean includeDetails) {
+        User user = member.getUser();
+        String summary = String.format(
+                "- User ID: %s | Username: %s | Global: %s | Nickname: %s | Effective: %s | Bot: %s",
+                user.getId(),
+                user.getName(),
+                formatNullable(user.getGlobalName()),
+                formatNullable(member.getNickname()),
+                member.getEffectiveName(),
+                user.isBot()
+        );
+        if (!includeDetails) {
+            return summary;
+        }
+
+        String roles = member.getRoles().stream()
+                .map(role -> role.getName() + " (ID: " + role.getId() + ")")
+                .collect(Collectors.joining(", "));
+        if (roles.isBlank()) {
+            roles = "none";
+        }
+        return summary + String.format(" | Joined: %s | Roles: %s", member.getTimeJoined(), roles);
     }
 
     private List<String> formatMessages(List<Message> messages) {
         return messages.stream()
                 .map(m -> {
                     String authorName = m.getAuthor().getName();
+                    String authorId = m.getAuthor().getId();
+                    String authorGlobalName = formatNullable(m.getAuthor().getGlobalName());
                     String timestamp = m.getTimeCreated().toString();
                     String content = m.getContentDisplay();
                     String msgId = m.getId();
 
                     StringBuilder sb = new StringBuilder();
-                    sb.append(String.format("- (ID: %s) **[%s]** `%s`: ```%s```", msgId, authorName, timestamp, content));
+                    sb.append(String.format(
+                            "- (ID: %s) **[%s]** (Author ID: %s, Global: %s, Effective: %s) `%s`: ```%s```",
+                            msgId,
+                            authorName,
+                            authorId,
+                            authorGlobalName,
+                            m.getAuthor().getEffectiveName(),
+                            timestamp,
+                            content
+                    ));
 
                     List<Message.Attachment> attachments = m.getAttachments();
                     if (!attachments.isEmpty()) {
@@ -280,6 +465,10 @@ public class UserService {
 
                     return sb.toString();
                 }).toList();
+    }
+
+    private String formatNullable(String value) {
+        return value == null || value.isBlank() ? "none" : value;
     }
 
     private String formatAttachmentSummary(Message.Attachment attachment) {

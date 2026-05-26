@@ -1,6 +1,7 @@
 package dev.saseq.services;
 
 import net.dv8tion.jda.api.JDA;
+import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.entities.Message;
 import net.dv8tion.jda.api.entities.channel.concrete.NewsChannel;
 import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
@@ -357,12 +358,27 @@ public class MessageService {
         return messages.stream()
                 .map(m -> {
                     String authorName = m.getAuthor().getName();
+                    String authorId = m.getAuthor().getId();
+                    String authorGlobalName = formatNullable(m.getAuthor().getGlobalName());
+                    Member member = m.getMember();
+                    String authorNickname = member != null ? formatNullable(member.getNickname()) : "none";
+                    String authorEffectiveName = member != null ? member.getEffectiveName() : m.getAuthor().getEffectiveName();
                     String timestamp = m.getTimeCreated().toString();
                     String content = m.getContentDisplay();
                     String msgId = m.getId();
 
                     StringBuilder sb = new StringBuilder();
-                    sb.append(String.format("- (ID: %s) **[%s]** `%s`: ```%s```", msgId, authorName, timestamp, content));
+                    sb.append(String.format(
+                            "- (ID: %s) **[%s]** (Author ID: %s, Global: %s, Nickname: %s, Effective: %s) `%s`: ```%s```",
+                            msgId,
+                            authorName,
+                            authorId,
+                            authorGlobalName,
+                            authorNickname,
+                            authorEffectiveName,
+                            timestamp,
+                            content
+                    ));
 
                     List<Message.Attachment> attachments = m.getAttachments();
                     if (!attachments.isEmpty()) {
@@ -374,6 +390,10 @@ public class MessageService {
 
                     return sb.toString();
                 }).toList();
+    }
+
+    private String formatNullable(String value) {
+        return value == null || value.isBlank() ? "none" : value;
     }
 
     private String formatFileSize(int bytes) {

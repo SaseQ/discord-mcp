@@ -310,6 +310,31 @@ Remote MCP Connector:
 </details>
 
 
+## Testing
+
+Run unit tests:
+
+```bash
+mvn test
+```
+
+Optional live Discord integration tests are included and are skipped unless `DISCORD_TOKEN` and `DISCORD_GUILD_ID` are set. They are read-only and validate member lookup/search against a real guild using the bot's own guild member record.
+
+```bash
+export DISCORD_TOKEN="YOUR_DISCORD_BOT_TOKEN"
+export DISCORD_GUILD_ID="YOUR_SERVER_ID"
+mvn -Dtest=DiscordLiveIntegrationTest test
+```
+
+Additional optional live checks:
+
+```bash
+export DISCORD_TEST_MEMBER_QUERY="member-name-or-prefix" # optional override; defaults to the bot username
+export DISCORD_TEST_CHANNEL_ID="TEXT_CHANNEL_ID_READABLE_BY_THE_BOT"
+mvn -Dtest=DiscordLiveIntegrationTest test
+```
+
+
 ## 🛠️ Available Tools
 
 #### Server Information
@@ -317,16 +342,18 @@ Remote MCP Connector:
 
 #### User Management
 - [`get_user_id_by_name`](): Get a Discord user's ID by username in a guild for ping usage `<@id>`
+- [`get_member_by_id`](): Get a Discord guild member by stable user ID, including username, global name, nickname, effective name, bot flag, join time, and roles
+- [`search_members`](): Search Discord guild members by ID, username, global name, nickname, or effective name and return identity candidates with stable user IDs
 - [`send_private_message`](): Send a private message to a specific user
 - [`edit_private_message`](): Edit a private message from a specific user
 - [`delete_private_message`](): Delete a private message from a specific user
-- [`read_private_messages`](): Read private message history from a specific user (includes attachment metadata, supports `count` 1-100 and optional cursor: `before` or `after` or `around`)
+- [`read_private_messages`](): Read private message history from a specific user (includes author IDs, attachment metadata, supports `count` 1-100 and optional cursor: `before` or `after` or `around`)
 
 #### Message Management
 - [`send_message`](): Send a message to a specific channel
 - [`edit_message`](): Edit a message from a specific channel
 - [`delete_message`](): Delete a message from a specific channel
-- [`read_messages`](): Read message history from a specific channel (includes attachment metadata, supports `count` 1-100 and optional cursor: `before` or `after` or `around`)
+- [`read_messages`](): Read message history from a specific channel (includes author IDs, attachment metadata, supports `count` 1-100 and optional cursor: `before` or `after` or `around`)
 - [`add_reaction`](): Add a reaction (emoji) to a specific message
 - [`remove_reaction`](): Remove a specified reaction (emoji) from a message
 
