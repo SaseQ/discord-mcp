@@ -438,19 +438,16 @@ public class UserService {
                 .map(m -> {
                     String authorName = m.getAuthor().getName();
                     String authorId = m.getAuthor().getId();
-                    String authorGlobalName = formatNullable(m.getAuthor().getGlobalName());
                     String timestamp = m.getTimeCreated().toString();
                     String content = m.getContentDisplay();
                     String msgId = m.getId();
 
                     StringBuilder sb = new StringBuilder();
                     sb.append(String.format(
-                            "- (ID: %s) **[%s]** (Author ID: %s, Global: %s, Effective: %s) `%s`: ```%s```",
+                            "- (ID: %s) **[%s]** (Author ID: %s) `%s`: ```%s```",
                             msgId,
                             authorName,
                             authorId,
-                            authorGlobalName,
-                            m.getAuthor().getEffectiveName(),
                             timestamp,
                             content
                     ));

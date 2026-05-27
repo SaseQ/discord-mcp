@@ -114,10 +114,7 @@ class DiscordLiveIntegrationTest {
 
         assertThat(result)
                 .contains("Retrieved")
-                .contains("Author ID:")
-                .contains("Global:")
-                .contains("Nickname:")
-                .contains("Effective:");
+                .contains("Author ID:");
     }
 
     private static boolean isProvided(String value) {

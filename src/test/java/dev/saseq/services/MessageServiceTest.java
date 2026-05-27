@@ -62,13 +62,11 @@ class MessageServiceTest {
                 .contains("Retrieved 2 messages")
                 .contains("(ID: 111111111111111111) **[alice]**")
                 .contains("Author ID: 123456789012345678")
-                .contains("Global: Alice")
-                .contains("Nickname: Ali")
-                .contains("Effective: Ali")
                 .contains("(ID: 222222222222222222) **[bob]**")
                 .contains("Author ID: 234567890123456789")
-                .contains("Nickname: none")
-                .contains("Effective: Bob");
+                .doesNotContain("Global:")
+                .doesNotContain("Nickname:")
+                .doesNotContain("Effective:");
     }
 
     @SuppressWarnings("unchecked")

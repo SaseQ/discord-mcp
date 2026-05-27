@@ -186,8 +186,9 @@ class UserServiceTest {
                 .contains("Retrieved 1 messages")
                 .contains("(ID: 111111111111111111) **[bob]**")
                 .contains("Author ID: 234567890123456789")
-                .contains("Global: Bob")
-                .contains("Effective: Bob");
+                .doesNotContain("Global:")
+                .doesNotContain("Nickname:")
+                .doesNotContain("Effective:");
     }
 
     @SuppressWarnings("unchecked")
