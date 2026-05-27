@@ -52,14 +52,9 @@ class UserServiceTest {
 
         String result = userService.getMemberById("123456789012345678", GUILD_ID);
 
-        assertThat(result)
-                .contains("Member found")
-                .contains("User ID: 123456789012345678")
-                .contains("Username: alice")
-                .contains("Global: Alice")
-                .contains("Nickname: Ali")
-                .contains("Effective: Ali")
-                .contains("Roles: none");
+        assertThat(result).isEqualTo("**Member found:**\n"
+                + "- User ID: 123456789012345678 | Username: alice | Global: Alice | Nickname: Ali | Effective: Ali | Bot: false"
+                + " | Joined: 2026-05-26T00:00Z | Roles: none");
         verify(lookup).useCache(false);
     }
 
@@ -83,10 +78,8 @@ class UserServiceTest {
 
         String result = userService.searchMembers("123456789012345678", "1", GUILD_ID);
 
-        assertThat(result)
-                .contains("Found 1 member candidate")
-                .contains("User ID: 123456789012345678")
-                .contains("Username: alice");
+        assertThat(result).isEqualTo("**Found 1 member candidate(s):**\n"
+                + "- User ID: 123456789012345678 | Username: alice | Global: Alice | Nickname: Ali | Effective: Ali | Bot: false");
         verify(lookup).useCache(false);
         verify(guild, never()).getMemberCache();
         verify(guild, never()).retrieveMembersByPrefix(anyString(), anyInt());
@@ -101,12 +94,8 @@ class UserServiceTest {
 
         String result = userService.searchMembers("alice", "1", GUILD_ID);
 
-        assertThat(result)
-                .contains("Found 1 member candidate")
-                .contains("User ID: 123456789012345678")
-                .contains("Username: alice")
-                .doesNotContain("Joined:")
-                .doesNotContain("Roles:");
+        assertThat(result).isEqualTo("**Found 1 member candidate(s):**\n"
+                + "- User ID: 123456789012345678 | Username: alice | Global: Alice | Nickname: Ali | Effective: Ali | Bot: false");
         verify(guild, never()).retrieveMembersByPrefix(anyString(), anyInt());
     }
 
@@ -121,10 +110,8 @@ class UserServiceTest {
 
         String result = userService.searchMembers("alice", null, GUILD_ID);
 
-        assertThat(result)
-                .contains("Found 1 member candidate")
-                .contains("User ID: 123456789012345678")
-                .contains("Nickname: none");
+        assertThat(result).isEqualTo("**Found 1 member candidate(s):**\n"
+                + "- User ID: 123456789012345678 | Username: alice | Global: Alice | Nickname: none | Effective: Alice | Bot: false");
     }
 
     @Test
@@ -138,9 +125,8 @@ class UserServiceTest {
 
         String result = userService.searchMembers("alice", null, GUILD_ID);
 
-        assertThat(result)
-                .contains("Found 1 member candidate")
-                .contains("User ID: 123456789012345678");
+        assertThat(result).isEqualTo("**Found 1 member candidate(s):**\n"
+                + "- User ID: 123456789012345678 | Username: alice | Global: Alice | Nickname: none | Effective: Alice | Bot: false");
     }
 
     @Test
@@ -169,7 +155,7 @@ class UserServiceTest {
         User targetUser = targetMember.getUser();
         PrivateChannel privateChannel = mock(PrivateChannel.class);
         MessageHistory history = mock(MessageHistory.class);
-        Message message = message("111111111111111111", "234567890123456789", "bob", "Bob", "hello");
+        Message message = message("111111111111111111", "234567890123456789", "bob", "hello");
         CacheRestAction<Member> memberLookup = memberLookup(targetMember);
         CacheRestAction<PrivateChannel> privateChannelLookup = privateChannelLookup(privateChannel);
         RestAction<List<Message>> retrievePast = restAction(List.of(message));
@@ -182,13 +168,8 @@ class UserServiceTest {
 
         String result = userService.readPrivateMessages("123456789012345678", "1", null, null, null);
 
-        assertThat(result)
-                .contains("Retrieved 1 messages")
-                .contains("(ID: 111111111111111111) **[bob]**")
-                .contains("Author ID: 234567890123456789")
-                .doesNotContain("Global:")
-                .doesNotContain("Nickname:")
-                .doesNotContain("Effective:");
+        assertThat(result).isEqualTo("**Retrieved 1 messages:** \n"
+                + "- (ID: 111111111111111111) **[bob]** (Author ID: 234567890123456789) `2026-05-26T00:00Z`: ```hello```");
     }
 
     @SuppressWarnings("unchecked")
@@ -251,12 +232,10 @@ class UserServiceTest {
         return member;
     }
 
-    private Message message(String messageId, String authorId, String username, String globalName, String content) {
+    private Message message(String messageId, String authorId, String username, String content) {
         User author = mock(User.class);
         when(author.getId()).thenReturn(authorId);
         when(author.getName()).thenReturn(username);
-        when(author.getGlobalName()).thenReturn(globalName);
-        when(author.getEffectiveName()).thenReturn(globalName != null ? globalName : username);
 
         Message message = mock(Message.class);
         when(message.getId()).thenReturn(messageId);
