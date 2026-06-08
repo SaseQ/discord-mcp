@@ -10,7 +10,12 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.InetAddress;
 import java.net.URI;
+import java.net.URLConnection;
+import java.net.UnknownHostException;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
@@ -203,12 +208,70 @@ public class EmojiService {
         return hasUrl ? downloadImage(imageUrl) : decodeDataUri(image);
     }
 
+    // Discord caps custom emoji uploads at 256 KiB; allow some headroom but bound the read.
+    private static final int MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+    private static final int CONNECT_TIMEOUT_MS = 5000;
+    private static final int READ_TIMEOUT_MS = 10000;
+
     private byte[] downloadImage(String url) {
+        URI uri;
         try {
-            return URI.create(url).toURL().openStream().readAllBytes();
+            uri = URI.create(url);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Invalid image URL: " + e.getMessage());
+        }
+
+        String scheme = uri.getScheme();
+        if (scheme == null || !scheme.equalsIgnoreCase("https")) {
+            throw new IllegalArgumentException("Image URL must use the https scheme");
+        }
+        String host = uri.getHost();
+        if (host == null || host.isEmpty()) {
+            throw new IllegalArgumentException("Image URL must include a host");
+        }
+        // SSRF guard: reject hosts that resolve to internal/metadata addresses.
+        assertHostIsPublic(host);
+
+        try {
+            URLConnection conn = uri.toURL().openConnection();
+            conn.setConnectTimeout(CONNECT_TIMEOUT_MS);
+            conn.setReadTimeout(READ_TIMEOUT_MS);
+            if (conn instanceof HttpURLConnection httpConn) {
+                // Don't follow redirects: a 30x could bounce us to a blocked address after the check.
+                httpConn.setInstanceFollowRedirects(false);
+            }
+            try (InputStream in = conn.getInputStream()) {
+                byte[] data = in.readNBytes(MAX_IMAGE_BYTES + 1);
+                if (data.length > MAX_IMAGE_BYTES) {
+                    throw new IllegalArgumentException("Image exceeds the maximum allowed size");
+                }
+                return data;
+            }
         } catch (IOException e) {
             throw new IllegalArgumentException("Failed to download image from URL: " + e.getMessage());
         }
+    }
+
+    private void assertHostIsPublic(String host) {
+        InetAddress[] addresses;
+        try {
+            addresses = InetAddress.getAllByName(host);
+        } catch (UnknownHostException e) {
+            throw new IllegalArgumentException("Cannot resolve image host: " + host);
+        }
+        for (InetAddress addr : addresses) {
+            if (addr.isLoopbackAddress() || addr.isAnyLocalAddress()
+                    || addr.isLinkLocalAddress() || addr.isSiteLocalAddress()
+                    || addr.isMulticastAddress() || isUniqueLocalIpv6(addr)) {
+                throw new IllegalArgumentException("Image URL resolves to a disallowed (internal) address");
+            }
+        }
+    }
+
+    // IPv6 unique-local range fc00::/7 is not covered by isSiteLocalAddress().
+    private boolean isUniqueLocalIpv6(InetAddress addr) {
+        byte[] bytes = addr.getAddress();
+        return bytes.length == 16 && (bytes[0] & 0xFE) == 0xFC;
     }
 
     private byte[] decodeDataUri(String dataUri) {
