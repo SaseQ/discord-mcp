@@ -324,6 +324,7 @@ Remote MCP Connector:
 
 #### Message Management
 - [`send_message`](): Send a message to a specific channel
+- [`send_file`](): Send a file (attachment) to a specific channel via local path, URL, or base64, with an optional message (max 25MB)
 - [`edit_message`](): Edit a message from a specific channel
 - [`delete_message`](): Delete a message from a specific channel
 - [`read_messages`](): Read message history from a specific channel (includes attachment metadata, supports `count` 1-100 and optional cursor: `before` or `after` or `around`)
