@@ -1,4 +1,4 @@
-FROM maven:3.9.6-amazoncorretto-17 AS build
+FROM docker.io/library/maven:3.9.6-amazoncorretto-17 AS build
 
 WORKDIR /app
 
@@ -7,7 +7,7 @@ COPY src ./src
 
 RUN mvn clean package -DskipTests
 
-FROM amazoncorretto:17-alpine
+FROM docker.io/library/amazoncorretto:17-alpine
 
 WORKDIR /app
 
