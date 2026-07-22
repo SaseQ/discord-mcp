@@ -67,9 +67,43 @@ public class DiscordMcpConfig {
             System.err.println("ERROR: The environment variable DISCORD_TOKEN is not set. Please set it to run the application properly.");
             System.exit(1);
         }
-        return JDABuilder.createDefault(token)
-                .enableIntents(GatewayIntent.GUILD_MEMBERS, GatewayIntent.GUILD_VOICE_STATES, GatewayIntent.SCHEDULED_EVENTS)
-                .build()
-                .awaitReady();
+        try {
+            return JDABuilder.createDefault(token)
+                    .enableIntents(GatewayIntent.GUILD_MEMBERS, GatewayIntent.GUILD_VOICE_STATES, GatewayIntent.SCHEDULED_EVENTS)
+                    .build()
+                    .awaitReady();
+        } catch (RuntimeException e) {
+            // In the default stdio transport, logback writes only to a file so stdout stays a clean
+            // MCP channel. That makes a startup failure here invisible to the MCP client, which just
+            // sees the process exit and reports an opaque transport error (-32000). Echo an actionable
+            // summary to stderr, which MCP clients capture and surface in their logs.
+            reportJdaStartupFailure(e);
+            System.exit(1);
+            throw e; // unreachable (System.exit does not return), but required to satisfy the compiler
+        }
+    }
+
+    private static void reportJdaStartupFailure(Throwable error) {
+        StringBuilder chain = new StringBuilder();
+        for (Throwable t = error; t != null; t = t.getCause()) {
+            if (chain.length() > 0) {
+                chain.append(" | ");
+            }
+            chain.append(t.getMessage() != null ? t.getMessage() : t.getClass().getSimpleName());
+        }
+        String details = chain.toString();
+        String lower = details.toLowerCase();
+
+        System.err.println("ERROR: Could not connect to Discord; the MCP server cannot start.");
+        if (lower.contains("token")) {
+            System.err.println("  Likely cause: Discord rejected DISCORD_TOKEN (missing, malformed, or reset/revoked).");
+            System.err.println("  Fix: create a fresh token in the Discord Developer Portal (Bot -> Reset Token) and set it");
+            System.err.println("       WITHOUT surrounding quotes, e.g. DISCORD_TOKEN=abc... (an env-file keeps quotes literally).");
+        } else if (lower.contains("intent") || lower.contains("4014")) {
+            System.err.println("  Likely cause: a privileged gateway intent is not enabled for this bot.");
+            System.err.println("  Fix: in the Discord Developer Portal (Bot -> Privileged Gateway Intents), enable");
+            System.err.println("       'Server Members Intent' (GUILD_MEMBERS).");
+        }
+        System.err.println("  Details: " + details);
     }
 }
