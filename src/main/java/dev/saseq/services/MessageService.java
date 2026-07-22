@@ -2,6 +2,7 @@ package dev.saseq.services;
 
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.entities.Message;
+import net.dv8tion.jda.api.entities.User;
 import net.dv8tion.jda.api.entities.channel.concrete.NewsChannel;
 import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
 import net.dv8tion.jda.api.entities.channel.concrete.ThreadChannel;
@@ -356,13 +357,19 @@ public class MessageService {
     private List<String> formatMessages(List<Message> messages) {
         return messages.stream()
                 .map(m -> {
-                    String authorName = m.getAuthor().getName();
+                    User author = m.getAuthor();
+                    // Prefer the guild nickname/display name when the author is a cached member,
+                    // otherwise fall back to the user's global display name (or username).
+                    String displayName = m.getMember() != null ? m.getMember().getEffectiveName() : author.getEffectiveName();
+                    String username = author.getName();
+                    String authorId = author.getId();
                     String timestamp = m.getTimeCreated().toString();
                     String content = m.getContentDisplay();
                     String msgId = m.getId();
 
                     StringBuilder sb = new StringBuilder();
-                    sb.append(String.format("- (ID: %s) **[%s]** `%s`: ```%s```", msgId, authorName, timestamp, content));
+                    sb.append(String.format("- (ID: %s) **[%s]** (username: %s, userId: %s) `%s`: ```%s```",
+                            msgId, displayName, username, authorId, timestamp, content));
 
                     List<Message.Attachment> attachments = m.getAttachments();
                     if (!attachments.isEmpty()) {

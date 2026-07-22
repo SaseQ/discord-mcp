@@ -39,9 +39,9 @@ public class UserService {
      * @param guildId Optional guild/server ID; uses default if not provided
      * @return User ID string if found, or error message
      */
-    @Tool(name = "get_user_id_by_name", description = "Get a Discord user's ID by username in a guild for ping usage <@id>.")
+    @Tool(name = "get_user_id_by_name", description = "Get a Discord user's ID by username, global display name, or server nickname in a guild for ping usage <@id>.")
     public String getUserIdByName(
-            @ToolParam(description = "Discord username (optionally username#discriminator)") String username,
+            @ToolParam(description = "Discord username, display name, or nickname (username may include #discriminator)") String username,
             @ToolParam(description = "Discord server ID", required = false) String guildId) {
         if (username == null || username.isEmpty()) {
             throw new IllegalArgumentException("username cannot be null");
@@ -61,7 +61,12 @@ public class UserService {
             name = username.substring(0, idx);
             discriminatorLocal = username.substring(idx + 1);
         }
-        List<Member> members = guild.getMemberCache().getElementsByUsername(name, true);
+        // Query the gateway (requires the GUILD_MEMBERS intent) instead of the cold member cache,
+        // and match against username, global display name, and server nickname — not just username.
+        final String finalName = name;
+        List<Member> members = retrieveMembersByPrefix(guild, name).stream()
+                .filter(m -> nameMatches(m, finalName))
+                .toList();
         if (discriminatorLocal != null) {
             final String finalDiscriminator = discriminatorLocal;
             members = members.stream()
@@ -69,15 +74,30 @@ public class UserService {
                     .toList();
         }
         if (members.isEmpty()) {
-            throw new IllegalArgumentException("No user found with username " + username);
+            throw new IllegalArgumentException("No user found with name " + username);
         }
         if (members.size() > 1) {
             String userList = members.stream()
                     .map(m -> m.getUser().getName() + "#" + m.getUser().getDiscriminator() + " (ID: " + m.getUser().getId() + ")")
                     .collect(Collectors.joining(", "));
-            throw new IllegalArgumentException("Multiple users found with username '" + username + "'. List: " + userList + ". Please specify the full username#discriminator.");
+            throw new IllegalArgumentException("Multiple users found with name '" + username + "'. List: " + userList + ". Please specify the full username#discriminator.");
         }
         return members.get(0).getUser().getId();
+    }
+
+    private List<Member> retrieveMembersByPrefix(Guild guild, String prefix) {
+        // retrieveMembersByPrefix caps the limit at 100; request the maximum so exact-match
+        // filtering downstream has the widest set of candidates to choose from.
+        List<Member> members = guild.retrieveMembersByPrefix(prefix, 100).get();
+        return members != null ? members : List.of();
+    }
+
+    private boolean nameMatches(Member member, String name) {
+        User user = member.getUser();
+        return name.equalsIgnoreCase(user.getName())
+                || name.equalsIgnoreCase(user.getGlobalName())
+                || name.equalsIgnoreCase(member.getNickname())
+                || name.equalsIgnoreCase(member.getEffectiveName());
     }
 
     /**
@@ -262,13 +282,17 @@ public class UserService {
     private List<String> formatMessages(List<Message> messages) {
         return messages.stream()
                 .map(m -> {
-                    String authorName = m.getAuthor().getName();
+                    User author = m.getAuthor();
+                    String displayName = author.getEffectiveName();
+                    String username = author.getName();
+                    String authorId = author.getId();
                     String timestamp = m.getTimeCreated().toString();
                     String content = m.getContentDisplay();
                     String msgId = m.getId();
 
                     StringBuilder sb = new StringBuilder();
-                    sb.append(String.format("- (ID: %s) **[%s]** `%s`: ```%s```", msgId, authorName, timestamp, content));
+                    sb.append(String.format("- (ID: %s) **[%s]** (username: %s, userId: %s) `%s`: ```%s```",
+                            msgId, displayName, username, authorId, timestamp, content));
 
                     List<Message.Attachment> attachments = m.getAttachments();
                     if (!attachments.isEmpty()) {
