@@ -122,6 +122,9 @@ public class MessageService {
     private record ResolvedFile(byte[] bytes, String name) {
     }
 
+    // Discord rejects standard-bot uploads above 25 MB.
+    private static final int MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+
     private ResolvedFile resolveFile(String filePath, String fileUrl, String fileData, String fileName) {
         boolean hasPath = filePath != null && !filePath.isEmpty();
         boolean hasUrl = fileUrl != null && !fileUrl.isEmpty();
@@ -149,7 +152,8 @@ public class MessageService {
     }
 
     private ResolvedFile readLocalFile(String filePath, String overrideName) {
-        Path path = Paths.get(filePath);
+        Path path = Paths.get(filePath).toAbsolutePath().normalize();
+        assertPathIsAllowed(path);
         if (!Files.exists(path) || Files.isDirectory(path)) {
             throw new IllegalArgumentException("File not found at filePath: " + filePath);
         }
@@ -162,12 +166,36 @@ public class MessageService {
         }
     }
 
-    private byte[] downloadFile(String url) {
-        try {
-            return URI.create(url).toURL().openStream().readAllBytes();
-        } catch (IOException e) {
-            throw new IllegalArgumentException("Failed to download file from URL: " + e.getMessage());
+    /**
+     * Confine local file reads to an allowlisted root.
+     *
+     * <p>Without this, send_file with an absolute filePath will read anything the process can
+     * read and post it to Discord. On a host where the service loads secrets from the
+     * environment, that is a one-call credential exfiltration path reachable by prompt
+     * injection. Set DISCORD_MCP_FILE_ROOT to the only directory uploads may come from.
+     *
+     * <p>Unset means local filePath uploads are refused entirely. That is the safe default:
+     * callers can still use fileUrl or base64 fileData.
+     */
+    private void assertPathIsAllowed(Path path) {
+        String root = System.getenv("DISCORD_MCP_FILE_ROOT");
+        if (root == null || root.isBlank()) {
+            throw new IllegalArgumentException(
+                    "Local filePath uploads are disabled. Set DISCORD_MCP_FILE_ROOT to an "
+                            + "allowed directory, or supply fileUrl or base64 fileData instead.");
         }
+        Path allowed = Paths.get(root).toAbsolutePath().normalize();
+        if (!path.startsWith(allowed)) {
+            throw new IllegalArgumentException(
+                    "filePath is outside the allowed upload directory");
+        }
+    }
+
+    private byte[] downloadFile(String url) {
+        // Delegated to the shared guard: https only, public host, no redirect
+        // following, bounded read. An unguarded fetch here would be an SSRF
+        // vector reachable by any MCP client.
+        return RemoteFetchGuard.fetch(url, MAX_UPLOAD_BYTES, "file");
     }
 
     private byte[] decodeBase64(String data) {
