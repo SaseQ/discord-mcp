@@ -7,11 +7,18 @@ import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
 import net.dv8tion.jda.api.entities.channel.concrete.ThreadChannel;
 import net.dv8tion.jda.api.entities.channel.middleman.MessageChannel;
 import net.dv8tion.jda.api.entities.emoji.Emoji;
+import net.dv8tion.jda.api.utils.FileUpload;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
+import java.net.URI;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.Base64;
 import java.util.List;
 
 @Service
@@ -68,6 +75,128 @@ public class MessageService {
         }
         Message sentMessage = channel.sendMessage(message).complete();
         return "Message sent successfully. Message link: " + sentMessage.getJumpUrl();
+    }
+
+    /**
+     * Sends a file (attachment) to a specified Discord channel.
+     *
+     * @param channelId The ID of the channel where the file will be sent.
+     * @param filePath  Absolute path to a local file to upload.
+     * @param fileUrl   Direct URL to a file to upload (alternative to filePath).
+     * @param fileData  File contents as base64 (Data URI or raw) to upload (alternative to filePath).
+     * @param fileName  File name to use for base64 input (and to override the name otherwise).
+     * @param message   Optional text content to accompany the file.
+     * @return A confirmation message with a link to the sent message.
+     */
+    @Tool(name = "send_file", description = "Send a file (attachment) to a specific channel. Provide the file as a local filePath OR a direct fileUrl OR base64 fileData (with fileName). Optionally include a text message. Max 25MB")
+    public String sendFile(@ToolParam(description = "Discord channel ID") String channelId,
+                           @ToolParam(description = "Absolute path to a local file to upload", required = false) String filePath,
+                           @ToolParam(description = "Direct URL to a file to upload (alternative to filePath)", required = false) String fileUrl,
+                           @ToolParam(description = "File contents as base64 Data URI or raw base64 (alternative to filePath; requires fileName)", required = false) String fileData,
+                           @ToolParam(description = "File name to use for base64 fileData, or to override the upload name", required = false) String fileName,
+                           @ToolParam(description = "Optional text message to accompany the file", required = false) String message) {
+        if (channelId == null || channelId.isEmpty()) {
+            throw new IllegalArgumentException("channelId cannot be null");
+        }
+
+        MessageChannel channel = getMessageChannelById(channelId);
+        if (channel == null) {
+            throw new IllegalArgumentException("Channel not found by channelId");
+        }
+
+        ResolvedFile resolvedFile = resolveFile(filePath, fileUrl, fileData, fileName);
+        if (resolvedFile.bytes().length > 25 * 1024 * 1024) {
+            throw new IllegalArgumentException("File exceeds 25 MB limit (" + (resolvedFile.bytes().length / (1024 * 1024)) + " MB). Discord rejects larger uploads for standard bots.");
+        }
+
+        FileUpload fileUpload = FileUpload.fromData(resolvedFile.bytes(), resolvedFile.name());
+        Message sentMessage;
+        if (message != null && !message.isEmpty()) {
+            sentMessage = channel.sendFiles(fileUpload).setContent(message).complete();
+        } else {
+            sentMessage = channel.sendFiles(fileUpload).complete();
+        }
+        return "File sent successfully. Message link: " + sentMessage.getJumpUrl();
+    }
+
+    private record ResolvedFile(byte[] bytes, String name) {
+    }
+
+    private ResolvedFile resolveFile(String filePath, String fileUrl, String fileData, String fileName) {
+        boolean hasPath = filePath != null && !filePath.isEmpty();
+        boolean hasUrl = fileUrl != null && !fileUrl.isEmpty();
+        boolean hasData = fileData != null && !fileData.isEmpty();
+
+        int provided = (hasPath ? 1 : 0) + (hasUrl ? 1 : 0) + (hasData ? 1 : 0);
+        if (provided == 0) {
+            throw new IllegalArgumentException("One of 'filePath', 'fileUrl', or 'fileData' (base64) must be provided");
+        }
+        if (provided > 1) {
+            throw new IllegalArgumentException("Provide only one of 'filePath', 'fileUrl', or 'fileData', not multiple");
+        }
+
+        boolean hasName = fileName != null && !fileName.isEmpty();
+        if (hasPath) {
+            return readLocalFile(filePath, hasName ? fileName : null);
+        }
+        if (hasUrl) {
+            return new ResolvedFile(downloadFile(fileUrl), hasName ? fileName : extractFileNameFromUrl(fileUrl));
+        }
+        if (!hasName) {
+            throw new IllegalArgumentException("'fileName' is required when providing base64 'fileData'");
+        }
+        return new ResolvedFile(decodeBase64(fileData), fileName);
+    }
+
+    private ResolvedFile readLocalFile(String filePath, String overrideName) {
+        Path path = Paths.get(filePath);
+        if (!Files.exists(path) || Files.isDirectory(path)) {
+            throw new IllegalArgumentException("File not found at filePath: " + filePath);
+        }
+        try {
+            byte[] bytes = Files.readAllBytes(path);
+            String name = overrideName != null ? overrideName : path.getFileName().toString();
+            return new ResolvedFile(bytes, name);
+        } catch (IOException e) {
+            throw new IllegalArgumentException("Failed to read file at filePath: " + e.getMessage());
+        }
+    }
+
+    private byte[] downloadFile(String url) {
+        try {
+            return URI.create(url).toURL().openStream().readAllBytes();
+        } catch (IOException e) {
+            throw new IllegalArgumentException("Failed to download file from URL: " + e.getMessage());
+        }
+    }
+
+    private byte[] decodeBase64(String data) {
+        String base64Data;
+        if (data.startsWith("data:")) {
+            int commaIndex = data.indexOf(',');
+            if (commaIndex == -1) {
+                throw new IllegalArgumentException("Invalid Data URI format. Expected: data:<mime>;base64,<data>");
+            }
+            base64Data = data.substring(commaIndex + 1);
+        } else {
+            base64Data = data;
+        }
+        try {
+            return Base64.getDecoder().decode(base64Data);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Invalid base64 fileData: " + e.getMessage());
+        }
+    }
+
+    private String extractFileNameFromUrl(String url) {
+        String path = url;
+        int queryIndex = path.indexOf('?');
+        if (queryIndex != -1) {
+            path = path.substring(0, queryIndex);
+        }
+        int lastSlash = path.lastIndexOf('/');
+        String name = lastSlash != -1 ? path.substring(lastSlash + 1) : path;
+        return name.isEmpty() ? "file" : name;
     }
 
     /**
