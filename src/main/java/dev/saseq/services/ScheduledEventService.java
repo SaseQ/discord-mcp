@@ -111,11 +111,58 @@ public class ScheduledEventService {
     }
 
     /**
-     * Whether the caller is asking to turn a recurring event back into a one-off.
+     * Apply a recurrence change, reporting precisely what already landed if it fails.
      *
-     * <p>Needs its own spelling because an absent parameter already means "leave recurrence alone",
-     * so there is no way to express {@code recurrence_rule: null} otherwise.
+     * <p>The ordinary fields are written by JDA's manager before this runs, so a failure here
+     * leaves a half-applied edit. Saying which half is the difference between a caller who can fix
+     * it and one who has to go and look. Creation can compensate by deleting the event it just
+     * made; an edit has nothing equivalent to undo, and an honest report beats a rollback that
+     * would itself be a second fallible write.
      */
+    private void patchRecurrence(Guild guild, ScheduledEvent event, DataObject body, String applied) {
+        try {
+            patchRaw(guild.getId(), event.getId(), body);
+        } catch (RuntimeException e) {
+            throw new IllegalArgumentException(
+                    "The recurrence change failed: " + e.getMessage() + ". "
+                            + (applied.isEmpty()
+                            ? "Nothing else was changed."
+                            : "These changes were already applied and remain in effect: " + applied + ".")
+                            + " The event's recurrence is unchanged.");
+        }
+    }
+
+    /** Human list of the fields JDA's manager has already written. */
+    private String describeApplied(String name, String description, String scheduledStartTime,
+                                   String location, Integer statusCode) {
+        List<String> parts = new java.util.ArrayList<>();
+        if (name != null && !name.isEmpty()) parts.add("name");
+        if (description != null && !description.isEmpty()) parts.add("description");
+        if (scheduledStartTime != null && !scheduledStartTime.isEmpty()) parts.add("start time");
+        if (location != null && !location.isEmpty()) parts.add("location");
+        if (statusCode != null) parts.add("status");
+        return String.join(", ", parts);
+    }
+
+    /**
+     * Whether two ISO8601 strings denote the same moment.
+     *
+     * <p>String equality is wrong here. Discord normalises the timestamps it returns, so the value
+     * from a raw GET routinely differs textually from the one the caller sent for the same instant
+     * — {@code 2026-08-06T01:00:00+00:00} against {@code 2026-08-05T20:00:00-05:00}. Comparing text
+     * would reject correct input.
+     */
+    private boolean sameInstant(String a, String b) {
+        if (a == null || b == null) {
+            return false;
+        }
+        try {
+            return OffsetDateTime.parse(a).toInstant().equals(OffsetDateTime.parse(b).toInstant());
+        } catch (DateTimeParseException e) {
+            return a.equals(b);
+        }
+    }
+
     /**
      * Parse the status parameter once, so the terminal-transition guard and the setter can never
      * disagree about what the caller asked for.
@@ -152,6 +199,12 @@ public class ScheduledEventService {
         return true;
     }
 
+    /**
+     * Whether the caller is asking to turn a recurring event back into a one-off.
+     *
+     * <p>Needs its own spelling because an absent parameter already means "leave recurrence alone",
+     * so there is no way to express {@code recurrence_rule: null} otherwise.
+     */
     private boolean isClearRequest(String recurrenceRule) {
         if (recurrenceRule == null) {
             return false;
@@ -230,7 +283,7 @@ public class ScheduledEventService {
                 : null;
         // Same disagreement the edit path refuses: an event created at one time whose series is
         // anchored at another follows the anchor, or fails the PATCH and leaves a stray one-off.
-        if (rule != null && !rule.getString("start", "").equals(scheduledStartTime)) {
+        if (rule != null && !sameInstant(rule.getString("start", null), scheduledStartTime)) {
             throw new IllegalArgumentException(
                     "scheduledStartTime is " + scheduledStartTime + " but the recurrence rule anchors at "
                             + rule.getString("start", "") + ". They must match. Omit start from the rule to "
@@ -297,7 +350,7 @@ public class ScheduledEventService {
             // the snap-back this tool promises to prevent. Checked against the effective start
             // whether or not this call is moving it: a recurrence-only edit can drag the anchor
             // away from an unchanged scheduled_start_time just as easily.
-            if (!newRule.getString("start", "").equals(anchor)) {
+            if (!sameInstant(newRule.getString("start", null), anchor)) {
                 throw new IllegalArgumentException(
                         "The event starts at " + anchor + " but the recurrence rule anchors at "
                                 + newRule.getString("start", "") + ". They must match, or the series would "
@@ -352,11 +405,18 @@ public class ScheduledEventService {
         StringBuilder result = new StringBuilder("Successfully updated scheduled event: ")
                 .append(event.getName()).append(" (ID: ").append(event.getId()).append(")");
 
+        // Everything above is already persisted. The recurrence write below is a separate request
+        // and can still fail for reasons validation cannot foresee, so the failure has to say which
+        // half landed. Creation can compensate by deleting the event it just made; an edit has
+        // nothing equivalent to undo, and the honest report is worth more than a rollback that
+        // would itself be a second fallible write.
+        String applied = describeApplied(name, description, scheduledStartTime, location, statusCode);
+
         if (clearingRecurrence) {
-            patchRaw(guild.getId(), event.getId(), DataObject.empty().putNull("recurrence_rule"));
+            patchRecurrence(guild, event, DataObject.empty().putNull("recurrence_rule"), applied);
             result.append("\n  • Recurrence removed. This is now a one-off event.");
         } else if (newRule != null) {
-            patchRaw(guild.getId(), event.getId(), DataObject.empty().put("recurrence_rule", newRule));
+            patchRecurrence(guild, event, DataObject.empty().put("recurrence_rule", newRule), applied);
             result.append("\n  • Recurrence set: ").append(RecurrenceRule.describe(newRule));
         } else if (existingRecurrence != null && movingStart) {
             // The bug this tool used to have. A recurring event's series is anchored by
@@ -368,7 +428,7 @@ public class ScheduledEventService {
             // existingRecurrence also returns count/end/by_year_day, which Discord owns and
             // rejects on the way back in.
             DataObject moved = RecurrenceRule.withStart(existingRecurrence, scheduledStartTime);
-            patchRaw(guild.getId(), event.getId(), DataObject.empty().put("recurrence_rule", moved));
+            patchRecurrence(guild, event, DataObject.empty().put("recurrence_rule", moved), applied);
             result.append("\n  • This is a recurring event, so its recurrence anchor was moved to ")
                     .append(scheduledStartTime)
                     .append(" as well. Without that the series would have snapped back to the old time.");

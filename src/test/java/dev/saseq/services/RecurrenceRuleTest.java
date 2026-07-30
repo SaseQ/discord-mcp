@@ -160,6 +160,25 @@ class RecurrenceRuleTest {
     }
 
     @Test
+    void acceptsAnNWeekdaySelectorRegardlessOfMemberOrder() {
+        // JSON member order carries no meaning, so {"day":2,"n":1} must be accepted exactly as
+        // {"n":1,"day":2} is. Comparing serialised text would have rejected it.
+        assertThat(RecurrenceRule.parse(
+                "{\"frequency\": 1, \"by_n_weekday\": [{\"day\": 2, \"n\": 1}]}", START)
+                .getArray("by_n_weekday").getObject(0).getInt("day")).isEqualTo(2);
+    }
+
+    @Test
+    void rejectsFractionalIntervals() {
+        // getInt would truncate 1.9 to 1 and write it back, turning an unsupported value into a
+        // silently different schedule.
+        assertThatThrownBy(() -> RecurrenceRule.parse(
+                "{\"frequency\": 2, \"interval\": 1.9, \"by_weekday\": [2]}", START))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("whole number");
+    }
+
+    @Test
     void rejectsASelectorThatContradictsTheAnchor() {
         // A Wednesday anchor with a Thursday by_weekday is not a Thursday series, it is an
         // incoherent rule that Discord rejects or silently reinterprets.

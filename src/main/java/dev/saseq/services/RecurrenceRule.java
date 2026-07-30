@@ -92,6 +92,13 @@ public final class RecurrenceRule {
                     "recurrence_rule.frequency must be 0 (yearly), 1 (monthly), 2 (weekly), or 3 (daily)");
         }
 
+        // getInt would quietly truncate 1.9 to 1 and then write the result back, turning an
+        // unsupported interval into a silently different schedule.
+        if (rule.hasKey("interval") && rule.get("interval") instanceof Number number
+                && number.doubleValue() != Math.floor(number.doubleValue())) {
+            throw new IllegalArgumentException(
+                    "recurrence_rule.interval must be a whole number, got " + number);
+        }
         int interval = rule.hasKey("interval") ? rule.getInt("interval") : 1;
         if (interval < 1) {
             throw new IllegalArgumentException("recurrence_rule.interval must be at least 1");
@@ -261,6 +268,16 @@ public final class RecurrenceRule {
                 continue;
             }
             String got = rule.getArray(selector).toString();
+            if (selector.equals("by_n_weekday")) {
+                // Compared field by field: JSON member order carries no meaning, so serialising
+                // {"day":2,"n":1} and comparing text would reject a rule that is in fact identical.
+                DataObject wantNth = expected.getArray(selector).getObject(0);
+                DataObject gotNth = rule.getArray(selector).getObject(0);
+                if (wantNth.getInt("n") == gotNth.getInt("n")
+                        && wantNth.getInt("day") == gotNth.getInt("day")) {
+                    continue;
+                }
+            }
             if (!want.equals(got)) {
                 throw new IllegalArgumentException(
                         "recurrence_rule." + selector + " is " + got + " but start (" + anchor
