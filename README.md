@@ -147,8 +147,12 @@ base64 `fileData`. Set this only if you need local-path uploads, and point it at
 directory that holds nothing but uploads:
 
 ```bash
-DISCORD_MCP_FILE_ROOT=/var/lib/discord-mcp/uploads
+export DISCORD_MCP_FILE_ROOT=/var/lib/discord-mcp/uploads
 ```
+
+Or inline on the launch command, alongside `DISCORD_TOKEN`. A bare assignment
+without `export` stays a shell variable and never reaches the Java process, so
+Spring sees it as unset and `send_file` keeps refusing local paths.
 
 Why it defaults to off: every tool here is callable by an LLM, and an agent's context can
 be poisoned by any message it reads. An unconstrained `filePath` means one tool call can
