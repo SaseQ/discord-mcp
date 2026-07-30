@@ -110,6 +110,35 @@ class RecurrenceRuleTest {
     }
 
     @Test
+    void validatesTheContentsOfAnNWeekdayEntryNotJustItsLength() {
+        // n is which occurrence in the month (1-5) and day is 0=Monday..6=Sunday. Checking only
+        // the array length let a bad entry create the event and fail on the recurrence PATCH.
+        assertThatThrownBy(() -> RecurrenceRule.parse(
+                "{\"frequency\": 1, \"by_n_weekday\": [{\"n\": 0, \"day\": 2}]}", START))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("n must be 1 to 5");
+
+        assertThatThrownBy(() -> RecurrenceRule.parse(
+                "{\"frequency\": 1, \"by_n_weekday\": [{\"n\": 6, \"day\": 2}]}", START))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("n must be 1 to 5");
+
+        assertThatThrownBy(() -> RecurrenceRule.parse(
+                "{\"frequency\": 1, \"by_n_weekday\": [{\"n\": 2, \"day\": 7}]}", START))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("0=Monday");
+
+        assertThatThrownBy(() -> RecurrenceRule.parse(
+                "{\"frequency\": 1, \"by_n_weekday\": [{\"n\": 2}]}", START))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("both n and day");
+
+        assertThat(RecurrenceRule.parse(
+                "{\"frequency\": 1, \"by_n_weekday\": [{\"n\": 2, \"day\": 4}]}", START)
+                .getArray("by_n_weekday").getObject(0).getInt("n")).isEqualTo(2);
+    }
+
+    @Test
     void withStartDropsServerOwnedFieldsAndMovesTheAnchor() {
         // Shaped like a real GET response: Discord returns count/end/by_year_day, and echoing
         // them back on a PATCH is rejected.

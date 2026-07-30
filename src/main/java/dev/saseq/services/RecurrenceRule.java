@@ -131,9 +131,26 @@ public final class RecurrenceRule {
                 throw new IllegalArgumentException(
                         "recurrence_rule.by_n_weekday is only valid for monthly events (frequency 1)");
             }
-            if (rule.getArray("by_n_weekday").length() != 1) {
+            DataArray entries = rule.getArray("by_n_weekday");
+            if (entries.length() != 1) {
                 throw new IllegalArgumentException(
                         "recurrence_rule.by_n_weekday must contain exactly one entry");
+            }
+            DataObject nth = entries.getObject(0);
+            if (!nth.hasKey("n") || !nth.hasKey("day")) {
+                throw new IllegalArgumentException(
+                        "recurrence_rule.by_n_weekday entries need both n and day, "
+                                + "for example {\"n\": 2, \"day\": 4} for the second Friday");
+            }
+            int n = nth.getInt("n");
+            if (n < 1 || n > 5) {
+                throw new IllegalArgumentException(
+                        "recurrence_rule.by_n_weekday n must be 1 to 5 (which occurrence in the month), got " + n);
+            }
+            int day = nth.getInt("day");
+            if (day < 0 || day > 6) {
+                throw new IllegalArgumentException(
+                        "recurrence_rule.by_n_weekday day must be 0=Monday through 6=Sunday, got " + day);
             }
         }
 
