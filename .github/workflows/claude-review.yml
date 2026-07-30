@@ -322,6 +322,11 @@ jobs:
           # the review is produced and then discarded. Observed on the first live
           # run: 12 turns, no errors, no permission denials, and no output.
           use_sticky_comment: "true"
+          # This is the one that actually creates the tracking comment. Its own
+          # description: "Force tag mode with tracking comments for pull_request
+          # and issue events." use_sticky_comment only consolidates comments once
+          # they exist; without track_progress there is nothing to consolidate.
+          track_progress: "true"
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
