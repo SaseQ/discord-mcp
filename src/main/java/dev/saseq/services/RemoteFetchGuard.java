@@ -17,13 +17,40 @@ import java.net.UnknownHostException;
  * new download site cannot silently ship without them, which is exactly what happened when
  * {@code send_file} was added after {@code createEmoji} had already been hardened.
  *
- * <p>Enforces: https only, resolvable public host, no redirect following (a 30x could bounce to a
- * blocked address after the check passed), bounded read, and finite timeouts.
+ * <p>Enforces: https only, a public destination, no redirect following (a 30x could bounce to a
+ * blocked address after the check passed), a 200 response, a bounded read, and finite timeouts.
  */
 public final class RemoteFetchGuard {
 
     private static final int CONNECT_TIMEOUT_MS = 5000;
     private static final int READ_TIMEOUT_MS = 10000;
+
+    /**
+     * Blocked destinations, as {prefix bytes, prefix length in bits}.
+     *
+     * <p>Deliberately an explicit CIDR list rather than the {@link InetAddress} predicates. Those
+     * predicates leave real gaps: {@code isSiteLocalAddress()} does not cover carrier-grade NAT
+     * ({@code 100.64/10}), {@code 0.0.0.0/8}, IETF protocol assignments ({@code 192.0.0.0/24},
+     * which includes DS-Lite), benchmarking space ({@code 198.18/15}), reserved
+     * {@code 240.0.0.0/4}, or the broadcast address; and nothing in the predicate set touches
+     * NAT64 ({@code 64:ff9b::/96}), where {@code 64:ff9b::a00:1} reaches {@code 10.0.0.1}.
+     */
+    private static final int[][] BLOCKED_V4 = {
+            {0, 0, 0, 0, 8},          // "this host on this network"
+            {10, 0, 0, 0, 8},         // RFC1918
+            {100, 64, 0, 0, 10},      // carrier-grade NAT
+            {127, 0, 0, 0, 8},        // loopback
+            {169, 254, 0, 0, 16},     // link-local, incl. cloud metadata
+            {172, 16, 0, 0, 12},      // RFC1918
+            {192, 0, 0, 0, 24},       // IETF protocol assignments, incl. DS-Lite
+            {192, 0, 2, 0, 24},       // TEST-NET-1
+            {192, 168, 0, 0, 16},     // RFC1918
+            {198, 18, 0, 0, 15},      // benchmarking
+            {198, 51, 100, 0, 24},    // TEST-NET-2
+            {203, 0, 113, 0, 24},     // TEST-NET-3
+            {224, 0, 0, 0, 4},        // multicast
+            {240, 0, 0, 0, 4},        // reserved, incl. 255.255.255.255
+    };
 
     private RemoteFetchGuard() {
     }
@@ -31,9 +58,9 @@ public final class RemoteFetchGuard {
     /**
      * Fetch a caller-supplied URL with SSRF protection and a size ceiling.
      *
-     * @param url        the caller-supplied URL
-     * @param maxBytes   reject responses larger than this
-     * @param what       noun used in error messages, e.g. "image" or "file"
+     * @param url      the caller-supplied URL
+     * @param maxBytes reject responses larger than this
+     * @param what     noun used in error messages, e.g. "image" or "file"
      * @return the response body
      */
     public static byte[] fetch(String url, int maxBytes, String what) {
@@ -63,6 +90,15 @@ public final class RemoteFetchGuard {
                 httpConn.setInstanceFollowRedirects(false);
             }
             try (InputStream in = conn.getInputStream()) {
+                if (conn instanceof HttpURLConnection httpConn) {
+                    int status = httpConn.getResponseCode();
+                    if (status != HttpURLConnection.HTTP_OK) {
+                        // With redirects disabled, a 3xx body would otherwise be
+                        // uploaded as if it were the requested content.
+                        throw new IllegalArgumentException(
+                                "Refusing " + what + " URL: server returned HTTP " + status);
+                    }
+                }
                 byte[] data = in.readNBytes(maxBytes + 1);
                 if (data.length > maxBytes) {
                     throw new IllegalArgumentException(what + " exceeds the maximum allowed size");
@@ -70,7 +106,10 @@ public final class RemoteFetchGuard {
                 return data;
             }
         } catch (IOException e) {
-            throw new IllegalArgumentException("Failed to download " + what + " from URL: " + e.getMessage());
+            // Deliberately does not echo the underlying IOException. Passing it
+            // through turns this into a reachability prober for arbitrary
+            // public IP:port, including the host's own public address.
+            throw new IllegalArgumentException("Failed to download " + what + " from URL");
         }
     }
 
@@ -81,19 +120,102 @@ public final class RemoteFetchGuard {
         } catch (UnknownHostException e) {
             throw new IllegalArgumentException("Cannot resolve " + what + " host: " + host);
         }
+        if (addresses.length == 0) {
+            throw new IllegalArgumentException("Cannot resolve " + what + " host: " + host);
+        }
+        // Reject if ANY answer is blocked, not just the one that would be used.
+        // A multi-record answer must not be able to smuggle a private address.
         for (InetAddress addr : addresses) {
-            if (addr.isLoopbackAddress() || addr.isAnyLocalAddress()
-                    || addr.isLinkLocalAddress() || addr.isSiteLocalAddress()
-                    || addr.isMulticastAddress() || isUniqueLocalIpv6(addr)) {
+            if (isBlocked(addr)) {
                 throw new IllegalArgumentException(
                         what + " URL resolves to a disallowed (internal) address");
             }
         }
     }
 
-    /** IPv6 unique-local range fc00::/7 is not covered by isSiteLocalAddress(). */
-    private static boolean isUniqueLocalIpv6(InetAddress addr) {
-        byte[] bytes = addr.getAddress();
-        return bytes.length == 16 && (bytes[0] & 0xFE) == 0xFC;
+    static boolean isBlocked(InetAddress addr) {
+        byte[] bytes = canonicalize(addr.getAddress());
+
+        if (bytes.length == 4) {
+            for (int[] rule : BLOCKED_V4) {
+                byte[] prefix = {(byte) rule[0], (byte) rule[1], (byte) rule[2], (byte) rule[3]};
+                if (matchesPrefix(bytes, prefix, rule[4])) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        if (bytes.length == 16) {
+            if (addr.isLoopbackAddress() || addr.isAnyLocalAddress()
+                    || addr.isLinkLocalAddress() || addr.isSiteLocalAddress()
+                    || addr.isMulticastAddress()) {
+                return true;
+            }
+            // fc00::/7 unique-local is not covered by isSiteLocalAddress().
+            if ((bytes[0] & 0xFE) == 0xFC) {
+                return true;
+            }
+            // NAT64 well-known prefix 64:ff9b::/96 tunnels IPv4 destinations, so
+            // check the embedded v4 address rather than the wrapper.
+            if (isNat64(bytes)) {
+                byte[] embedded = {bytes[12], bytes[13], bytes[14], bytes[15]};
+                for (int[] rule : BLOCKED_V4) {
+                    byte[] prefix = {(byte) rule[0], (byte) rule[1], (byte) rule[2], (byte) rule[3]};
+                    if (matchesPrefix(embedded, prefix, rule[4])) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        // Unknown address family: fail closed.
+        return true;
+    }
+
+    /**
+     * Reduce an IPv4-mapped IPv6 address (::ffff:0:0/96) to its four IPv4 bytes.
+     *
+     * <p>Without this, a mapped address arriving as an {@code Inet6Address} passes every
+     * predicate: {@code ::ffff:127.0.0.1} reports neither loopback nor site-local, yet
+     * {@code connect()} reaches 127.0.0.1.
+     */
+    private static byte[] canonicalize(byte[] bytes) {
+        if (bytes.length != 16) {
+            return bytes;
+        }
+        for (int i = 0; i < 10; i++) {
+            if (bytes[i] != 0) {
+                return bytes;
+            }
+        }
+        if ((bytes[10] & 0xFF) == 0xFF && (bytes[11] & 0xFF) == 0xFF) {
+            return new byte[]{bytes[12], bytes[13], bytes[14], bytes[15]};
+        }
+        return bytes;
+    }
+
+    /** 64:ff9b::/96 */
+    private static boolean isNat64(byte[] b) {
+        return (b[0] & 0xFF) == 0x00 && (b[1] & 0xFF) == 0x64
+                && (b[2] & 0xFF) == 0xFF && (b[3] & 0xFF) == 0x9B
+                && b[4] == 0 && b[5] == 0 && b[6] == 0 && b[7] == 0
+                && b[8] == 0 && b[9] == 0 && b[10] == 0 && b[11] == 0;
+    }
+
+    private static boolean matchesPrefix(byte[] addr, byte[] prefix, int prefixBits) {
+        int fullBytes = prefixBits / 8;
+        int remainingBits = prefixBits % 8;
+        for (int i = 0; i < fullBytes; i++) {
+            if (addr[i] != prefix[i]) {
+                return false;
+            }
+        }
+        if (remainingBits == 0) {
+            return true;
+        }
+        int mask = 0xFF << (8 - remainingBits);
+        return (addr[fullBytes] & mask) == (prefix[fullBytes] & mask);
     }
 }

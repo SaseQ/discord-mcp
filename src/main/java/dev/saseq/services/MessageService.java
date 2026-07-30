@@ -14,8 +14,9 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
-import java.net.URI;
+import java.io.InputStream;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Base64;
@@ -25,6 +26,13 @@ import java.util.List;
 public class MessageService {
 
     private final JDA jda;
+
+    /**
+     * The only directory {@code send_file} may read local paths from. Unset disables local
+     * paths entirely. Package-private so tests can set it without Spring.
+     */
+    @Value("${DISCORD_MCP_FILE_ROOT:}")
+    String fileRoot;
 
     public MessageService(JDA jda) {
         this.jda = jda;
@@ -105,7 +113,7 @@ public class MessageService {
         }
 
         ResolvedFile resolvedFile = resolveFile(filePath, fileUrl, fileData, fileName);
-        if (resolvedFile.bytes().length > 25 * 1024 * 1024) {
+        if (resolvedFile.bytes().length > MAX_UPLOAD_BYTES) {
             throw new IllegalArgumentException("File exceeds 25 MB limit (" + (resolvedFile.bytes().length / (1024 * 1024)) + " MB). Discord rejects larger uploads for standard bots.");
         }
 
@@ -152,13 +160,17 @@ public class MessageService {
     }
 
     private ResolvedFile readLocalFile(String filePath, String overrideName) {
-        Path path = Paths.get(filePath).toAbsolutePath().normalize();
-        assertPathIsAllowed(path);
-        if (!Files.exists(path) || Files.isDirectory(path)) {
-            throw new IllegalArgumentException("File not found at filePath: " + filePath);
-        }
+        Path path = resolveWithinAllowedRoot(filePath);
         try {
-            byte[] bytes = Files.readAllBytes(path);
+            // Bounded read: readAllBytes on an attacker-chosen path would OOM the
+            // JVM long before the size check below could reject it.
+            byte[] bytes;
+            try (InputStream in = Files.newInputStream(path, LinkOption.NOFOLLOW_LINKS)) {
+                bytes = in.readNBytes(MAX_UPLOAD_BYTES + 1);
+            }
+            if (bytes.length > MAX_UPLOAD_BYTES) {
+                throw new IllegalArgumentException("File exceeds the 25 MB limit. Discord rejects larger uploads for standard bots.");
+            }
             String name = overrideName != null ? overrideName : path.getFileName().toString();
             return new ResolvedFile(bytes, name);
         } catch (IOException e) {
@@ -176,19 +188,53 @@ public class MessageService {
      *
      * <p>Unset means local filePath uploads are refused entirely. That is the safe default:
      * callers can still use fileUrl or base64 fileData.
+     *
+     * @return the fully resolved real path, which the caller must read instead of the
+     * caller-supplied one
      */
-    private void assertPathIsAllowed(Path path) {
-        String root = System.getenv("DISCORD_MCP_FILE_ROOT");
-        if (root == null || root.isBlank()) {
+    private Path resolveWithinAllowedRoot(String filePath) {
+        Path allowed = allowedRoot();
+        Path real;
+        try {
+            // toRealPath, not normalize: normalize is purely lexical, so a symlink
+            // inside the root pointing at /etc/shadow passes a prefix check on the
+            // normalized path. Both sides must be resolved for the comparison to mean
+            // anything, and the resolved path is what gets opened.
+            real = Paths.get(filePath).toRealPath();
+        } catch (IOException e) {
+            throw new IllegalArgumentException("File not found at filePath: " + filePath);
+        }
+        if (!real.startsWith(allowed) || real.equals(allowed)) {
+            throw new IllegalArgumentException("filePath is outside the allowed upload directory");
+        }
+        if (!Files.isRegularFile(real, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IllegalArgumentException("filePath is not a regular file: " + filePath);
+        }
+        return real;
+    }
+
+    private Path allowedRoot() {
+        if (fileRoot == null || fileRoot.isBlank()) {
             throw new IllegalArgumentException(
                     "Local filePath uploads are disabled. Set DISCORD_MCP_FILE_ROOT to an "
                             + "allowed directory, or supply fileUrl or base64 fileData instead.");
         }
-        Path allowed = Paths.get(root).toAbsolutePath().normalize();
-        if (!path.startsWith(allowed)) {
+        Path root;
+        try {
+            root = Paths.get(fileRoot).toRealPath();
+        } catch (IOException e) {
             throw new IllegalArgumentException(
-                    "filePath is outside the allowed upload directory");
+                    "DISCORD_MCP_FILE_ROOT does not exist or cannot be resolved: " + fileRoot);
         }
+        if (!Files.isDirectory(root)) {
+            throw new IllegalArgumentException("DISCORD_MCP_FILE_ROOT is not a directory: " + fileRoot);
+        }
+        // A filesystem root has no name components. Accepting "/" would confine
+        // nothing at all and silently re-open the whole vulnerability.
+        if (root.getNameCount() == 0) {
+            throw new IllegalArgumentException("DISCORD_MCP_FILE_ROOT must not be a filesystem root");
+        }
+        return root;
     }
 
     private byte[] downloadFile(String url) {

@@ -136,6 +136,29 @@ java -jar /absolute/path/to/discord-mcp-1.0.0.jar
 
 Default MCP endpoint URL (HTTP profile): `http://localhost:8085/mcp`
 
+## 🔒 Security notes
+
+### `DISCORD_MCP_FILE_ROOT`
+
+Optional. The single directory that `send_file` may read local `filePath` uploads from.
+
+**Unset (default), local paths are refused.** `send_file` still works via `fileUrl` or
+base64 `fileData`. Set this only if you need local-path uploads, and point it at a
+directory that holds nothing but uploads:
+
+```bash
+DISCORD_MCP_FILE_ROOT=/var/lib/discord-mcp/uploads
+```
+
+Why it defaults to off: every tool here is callable by an LLM, and an agent's context can
+be poisoned by any message it reads. An unconstrained `filePath` means one tool call can
+post `/proc/self/environ` — bot token included — into a Discord channel. Paths are resolved
+with `toRealPath()` and prefix-checked, so symlinks out of the root are rejected too. A
+filesystem root (`/`) is rejected, since it would confine nothing.
+
+Run the server as a dedicated unprivileged user regardless. The env var is a guard, not a
+substitute for one.
+
 </details>
 
 ## 🔗 Connections
@@ -351,7 +374,7 @@ mvn -Dtest=DiscordLiveIntegrationTest test
 
 #### Message Management
 - [`send_message`](): Send a message to a specific channel
-- [`send_file`](): Send a file (attachment) to a specific channel via local path, URL, or base64, with an optional message (max 25MB)
+- [`send_file`](): Send a file (attachment) to a specific channel via local path, URL, or base64, with an optional message (max 25MB). Local `filePath` uploads require [`DISCORD_MCP_FILE_ROOT`](#-security-notes)
 - [`edit_message`](): Edit a message from a specific channel
 - [`delete_message`](): Delete a message from a specific channel
 - [`read_messages`](): Read message history from a specific channel (includes author IDs, attachment metadata, supports `count` 1-100 and optional cursor: `before` or `after` or `around`)
