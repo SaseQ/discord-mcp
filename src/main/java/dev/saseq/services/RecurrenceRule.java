@@ -185,6 +185,15 @@ public final class RecurrenceRule {
                         "recurrence_rule.by_n_weekday must contain exactly one entry");
             }
             DataObject nth = entries.getObject(0);
+            for (String field : List.of("n", "day")) {
+                // Same truncation trap as interval: getInt would turn 1.9 into 1 while the
+                // fraction stays in the payload and goes to Discord.
+                if (nth.hasKey(field) && nth.get(field) instanceof Number number
+                        && number.doubleValue() != Math.floor(number.doubleValue())) {
+                    throw new IllegalArgumentException(
+                            "recurrence_rule.by_n_weekday " + field + " must be a whole number, got " + number);
+                }
+            }
             if (!nth.hasKey("n") || !nth.hasKey("day")) {
                 throw new IllegalArgumentException(
                         "recurrence_rule.by_n_weekday entries need both n and day, "

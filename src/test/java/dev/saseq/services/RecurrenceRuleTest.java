@@ -169,6 +169,21 @@ class RecurrenceRuleTest {
     }
 
     @Test
+    void rejectsFractionalNWeekdayFields() {
+        // Same truncation trap as interval: getInt turns 1.9 into 1 while the fraction stays in
+        // the payload and reaches Discord.
+        assertThatThrownBy(() -> RecurrenceRule.parse(
+                "{\"frequency\": 1, \"by_n_weekday\": [{\"n\": 1.9, \"day\": 2}]}", START))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("whole number");
+
+        assertThatThrownBy(() -> RecurrenceRule.parse(
+                "{\"frequency\": 1, \"by_n_weekday\": [{\"n\": 1, \"day\": 2.9}]}", START))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("whole number");
+    }
+
+    @Test
     void rejectsFractionalIntervals() {
         // getInt would truncate 1.9 to 1 and write it back, turning an unsupported value into a
         // silently different schedule.

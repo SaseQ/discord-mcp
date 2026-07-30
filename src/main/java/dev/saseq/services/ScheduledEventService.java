@@ -123,12 +123,26 @@ public class ScheduledEventService {
         try {
             patchRaw(guild.getId(), event.getId(), body);
         } catch (RuntimeException e) {
+            // A thrown request does not prove the change did not happen — a lost response after
+            // Discord processed the PATCH looks identical from here. Rather than assert an outcome
+            // we cannot know, read the event back and report what is actually true.
+            String outcome;
+            try {
+                DataObject after = fetchRaw(guild.getId(), event.getId());
+                DataObject rule = recurrenceOf(after);
+                outcome = rule == null
+                        ? " The event is currently not recurring."
+                        : " The event currently recurs: " + RecurrenceRule.describe(rule) + ".";
+            } catch (RuntimeException unverifiable) {
+                outcome = " Could not read the event back, so whether the recurrence change applied is"
+                        + " unknown — check the event before retrying.";
+            }
             throw new IllegalArgumentException(
                     "The recurrence change failed: " + e.getMessage() + ". "
                             + (applied.isEmpty()
                             ? "Nothing else was changed."
                             : "These changes were already applied and remain in effect: " + applied + ".")
-                            + " The event's recurrence is unchanged.");
+                            + outcome);
         }
     }
 
@@ -190,9 +204,27 @@ public class ScheduledEventService {
     /** Whether two rules pick the same point in the cycle, ignoring the anchor timestamp. */
     private boolean sameSelectors(DataObject a, DataObject b) {
         for (String selector : List.of("by_weekday", "by_n_weekday", "by_month", "by_month_day")) {
-            String left = a.hasKey(selector) && !a.isNull(selector) ? a.getArray(selector).toString() : "";
-            String right = b.hasKey(selector) && !b.isNull(selector) ? b.getArray(selector).toString() : "";
-            if (!left.equals(right)) {
+            boolean hasLeft = a.hasKey(selector) && !a.isNull(selector);
+            boolean hasRight = b.hasKey(selector) && !b.isNull(selector);
+            if (hasLeft != hasRight) {
+                return false;
+            }
+            if (!hasLeft) {
+                continue;
+            }
+            if (selector.equals("by_n_weekday")) {
+                // Field by field, not serialised text: Discord may return {"day":2,"n":1} where we
+                // build {"n":1,"day":2}, and reporting that as a schedule change would be a false
+                // alarm on the loudest message this tool produces.
+                DataObject left = a.getArray(selector).getObject(0);
+                DataObject right = b.getArray(selector).getObject(0);
+                if (left.getInt("n", -1) != right.getInt("n", -1)
+                        || left.getInt("day", -1) != right.getInt("day", -1)) {
+                    return false;
+                }
+                continue;
+            }
+            if (!a.getArray(selector).toString().equals(b.getArray(selector).toString())) {
                 return false;
             }
         }
@@ -480,6 +512,7 @@ public class ScheduledEventService {
         // One raw list call so recurrence is visible here. Without it a weekly class and a one-off
         // look identical, which is how a recurring event gets edited as though it were not one.
         java.util.Map<String, DataObject> rules = new java.util.HashMap<>();
+        boolean recurrenceKnown = false;
         try {
             Route.CompiledRoute route = Route.custom(Method.GET, "guilds/{guild_id}/scheduled-events")
                     .compile(guild.getId());
@@ -492,13 +525,18 @@ public class ScheduledEventService {
                     rules.put(o.getString("id"), rule);
                 }
             }
+            recurrenceKnown = true;
         } catch (RuntimeException e) {
-            // Recurrence detail is an enhancement to this listing, not its purpose. Losing it
-            // should not turn a working list call into a failure.
+            // Recurrence detail is an enhancement to this listing, not its purpose, so losing it
+            // must not turn a working list call into a failure. It must not silently read as
+            // "nothing recurs" either — that is indistinguishable from the real thing.
             rules.clear();
         }
 
-        return "Retrieved " + events.size() + " scheduled events:\n" +
+        String caveat = recurrenceKnown ? ""
+                : "\n(Recurrence information could not be read, so no event below is marked as recurring"
+                + " even if it is.)";
+        return "Retrieved " + events.size() + " scheduled events:" + caveat + "\n" +
                 events.stream()
                         .map(e -> {
                             StringBuilder sb = new StringBuilder();
