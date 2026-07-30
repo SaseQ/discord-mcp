@@ -100,6 +100,36 @@ class RecurrenceRuleTest {
     }
 
     @Test
+    void rejectsWeeklyIntervalsAboveTwo() {
+        // Discord supports every week and every other week, and nothing beyond. Accepting 3 here
+        // would create the event and only then have the recurrence PATCH rejected.
+        assertThatThrownBy(() -> RecurrenceRule.parse(
+                "{\"frequency\": 2, \"interval\": 3, \"by_weekday\": [2]}", START))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("1 or 2");
+    }
+
+    @Test
+    void withStartDropsServerOwnedFieldsAndMovesTheAnchor() {
+        // Shaped like a real GET response: Discord returns count/end/by_year_day, and echoing
+        // them back on a PATCH is rejected.
+        DataObject fromDiscord = DataObject.fromJson(
+                "{\"frequency\": 2, \"interval\": 1, \"by_weekday\": [2],"
+                        + " \"start\": \"2026-01-07T21:15:00-05:00\","
+                        + " \"count\": 12, \"end\": \"2026-12-31T00:00:00Z\", \"by_year_day\": null}");
+
+        DataObject moved = RecurrenceRule.withStart(fromDiscord, START);
+
+        assertThat(moved.getString("start")).isEqualTo(START);
+        assertThat(moved.hasKey("count")).isFalse();
+        assertThat(moved.hasKey("end")).isFalse();
+        assertThat(moved.hasKey("by_year_day")).isFalse();
+        // The selectors that define the series must survive the rebuild.
+        assertThat(moved.getInt("frequency")).isEqualTo(RecurrenceRule.WEEKLY);
+        assertThat(moved.getArray("by_weekday").getInt(0)).isEqualTo(2);
+    }
+
+    @Test
     void describesRulesInWordsSoRecurrenceIsVisible() {
         assertThat(RecurrenceRule.describe(
                 RecurrenceRule.parse("{\"frequency\": 2, \"by_weekday\": [2]}", START)))

@@ -25,6 +25,10 @@ public final class RecurrenceRule {
     /** Fields Discord documents as not settable by an API client. */
     private static final List<String> REJECTED = List.of("count", "end", "by_year_day");
 
+    /** Everything a client is allowed to send. Anything else is Discord's to populate. */
+    private static final List<String> WRITABLE =
+            List.of("frequency", "interval", "start", "by_weekday", "by_n_weekday", "by_month", "by_month_day");
+
     private static final String[] FREQ_NAMES = {"yearly", "monthly", "weekly", "daily"};
     private static final String[] DAY_NAMES = {
             "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"};
@@ -76,6 +80,14 @@ public final class RecurrenceRule {
             throw new IllegalArgumentException(
                     "recurrence_rule.interval may only exceed 1 for weekly events (frequency 2), "
                             + "which is how Discord expresses every-other-week.");
+        }
+        if (interval > 2) {
+            // Discord documents weekly interval as 1 or 2 only — 2 being every-other-week. A
+            // higher value is not "unusual but allowed", it is rejected, and letting it through
+            // create() would leave a stray non-recurring event behind.
+            throw new IllegalArgumentException(
+                    "recurrence_rule.interval must be 1 or 2. Discord only supports every week or "
+                            + "every other week; there is no every-Nth-week rule.");
         }
         rule.put("interval", interval);
 
@@ -152,6 +164,30 @@ public final class RecurrenceRule {
 
     private static boolean hasArray(DataObject rule, String key) {
         return rule.hasKey(key) && !rule.isNull(key) && rule.getArray(key).length() > 0;
+    }
+
+    /**
+     * Rebuild a rule Discord sent us into one we are allowed to send back.
+     *
+     * <p>A GET returns the server-owned fields too — {@code count}, {@code end},
+     * {@code by_year_day} — and echoing them on a PATCH is rejected. That matters most in the one
+     * case this class exists for: moving a recurring event's anchor starts from the existing rule.
+     *
+     * @param serverRule a recurrence rule as returned by Discord
+     * @param start      the new anchor
+     * @return a validated, writable rule
+     */
+    public static DataObject withStart(DataObject serverRule, String start) {
+        DataObject writable = DataObject.empty();
+        for (String field : WRITABLE) {
+            if (serverRule.hasKey(field) && !serverRule.isNull(field)) {
+                writable.put(field, serverRule.get(field));
+            }
+        }
+        writable.put("start", start);
+        // Round-trip through the same validation the caller's input gets, so we can never send
+        // ourselves something we would have rejected from anyone else.
+        return parse(writable.toString(), start);
     }
 
     /** One-line human summary, so a recurring event is visibly recurring in tool output. */

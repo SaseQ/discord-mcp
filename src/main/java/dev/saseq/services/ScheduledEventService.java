@@ -31,7 +31,9 @@ public class ScheduledEventService {
                     + "interval may exceed 1 only for weekly (every-other-week). "
                     + "by_n_weekday is monthly only; by_month with by_month_day is yearly only. "
                     + "count, end and by_year_day are set by Discord and must be omitted. "
-                    + "Defaults its start to the event's start time.";
+                    + "Defaults its start to the event's start time. "
+                    + "On edit, pass \"null\" to remove recurrence and make the event a one-off; "
+                    + "omitting this parameter leaves any existing recurrence untouched.";
 
     @Value("${DISCORD_GUILD_ID:}")
     private String defaultGuildId;
@@ -103,6 +105,20 @@ public class ScheduledEventService {
     /** The event's recurrence rule, or null if it is not a recurring event. */
     private DataObject recurrenceOf(DataObject raw) {
         return raw.isNull("recurrence_rule") ? null : raw.getObject("recurrence_rule");
+    }
+
+    /**
+     * Whether the caller is asking to turn a recurring event back into a one-off.
+     *
+     * <p>Needs its own spelling because an absent parameter already means "leave recurrence alone",
+     * so there is no way to express {@code recurrence_rule: null} otherwise.
+     */
+    private boolean isClearRequest(String recurrenceRule) {
+        if (recurrenceRule == null) {
+            return false;
+        }
+        String trimmed = recurrenceRule.trim();
+        return trimmed.equalsIgnoreCase("null") || trimmed.equalsIgnoreCase("none");
     }
 
     private String formatEvent(ScheduledEvent event) {
@@ -206,6 +222,20 @@ public class ScheduledEventService {
         DataObject existingRecurrence = recurrenceOf(raw);
         boolean movingStart = scheduledStartTime != null && !scheduledStartTime.isEmpty();
 
+        // Validate the recurrence BEFORE anything is persisted. manager.complete() below is not
+        // undoable, so parsing afterwards would report failure on a request that had already
+        // applied the name/description/time half of the edit.
+        boolean clearingRecurrence = isClearRequest(recurrenceRule);
+        DataObject newRule = null;
+        if (recurrenceRule != null && !recurrenceRule.isEmpty() && !clearingRecurrence) {
+            String anchor = movingStart ? scheduledStartTime : raw.getString("scheduled_start_time", null);
+            newRule = RecurrenceRule.parse(recurrenceRule, anchor);
+        }
+        if (clearingRecurrence && existingRecurrence == null) {
+            throw new IllegalArgumentException(
+                    "This event is not recurring, so there is no recurrence rule to clear.");
+        }
+
         var manager = event.getManager();
         if (name != null && !name.isEmpty()) manager.setName(name);
         if (description != null && !description.isEmpty()) manager.setDescription(description);
@@ -225,17 +255,22 @@ public class ScheduledEventService {
         StringBuilder result = new StringBuilder("Successfully updated scheduled event: ")
                 .append(event.getName()).append(" (ID: ").append(event.getId()).append(")");
 
-        if (recurrenceRule != null && !recurrenceRule.isEmpty()) {
-            String anchor = movingStart ? scheduledStartTime : raw.getString("scheduled_start_time", null);
-            DataObject rule = RecurrenceRule.parse(recurrenceRule, anchor);
-            patchRaw(guild.getId(), event.getId(), DataObject.empty().put("recurrence_rule", rule));
-            result.append("\n  • Recurrence set: ").append(RecurrenceRule.describe(rule));
+        if (clearingRecurrence) {
+            patchRaw(guild.getId(), event.getId(), DataObject.empty().putNull("recurrence_rule"));
+            result.append("\n  • Recurrence removed. This is now a one-off event.");
+        } else if (newRule != null) {
+            patchRaw(guild.getId(), event.getId(), DataObject.empty().put("recurrence_rule", newRule));
+            result.append("\n  • Recurrence set: ").append(RecurrenceRule.describe(newRule));
         } else if (existingRecurrence != null && movingStart) {
             // The bug this tool used to have. A recurring event's series is anchored by
             // recurrence_rule.start, not by scheduled_start_time. Moving only the latter shifts the
             // next occurrence and then the series snaps back to its old time, while the tool
             // reported plain success. Move the anchor with it and say so.
-            DataObject moved = existingRecurrence.put("start", scheduledStartTime);
+            //
+            // withStart rebuilds the rule from writable fields only: the GET that produced
+            // existingRecurrence also returns count/end/by_year_day, which Discord owns and
+            // rejects on the way back in.
+            DataObject moved = RecurrenceRule.withStart(existingRecurrence, scheduledStartTime);
             patchRaw(guild.getId(), event.getId(), DataObject.empty().put("recurrence_rule", moved));
             result.append("\n  • This is a recurring event, so its recurrence anchor was moved to ")
                     .append(scheduledStartTime)
