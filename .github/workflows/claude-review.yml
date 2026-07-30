@@ -422,6 +422,6 @@ jobs:
             --safe-mode
             --model claude-opus-5
             --max-turns 100
-            --tools "Read"
-            --allowedTools "Read,mcp__github_comment__update_claude_comment"
+            --tools "Read,ToolSearch"
+            --allowedTools "Read,ToolSearch,mcp__github_comment__update_claude_comment"
             --add-dir "${{ runner.temp }}/pr"
