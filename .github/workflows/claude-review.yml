@@ -2,10 +2,16 @@ name: Claude Review
 
 on:
   pull_request_target:
-    branches: [main]
-    # `edited` is here only to catch a PR retargeted onto main, which GitHub
-    # reports as an edit rather than an open. `closed` is here only so closing a
-    # PR cancels a review in flight; its job is skipped, so it starts nothing.
+    # No `branches:` filter, deliberately. Filtering on the base branch means a PR
+    # retargeted AWAY from main fires no event at all, so a review already running
+    # against main keeps going and posts against a PR that no longer targets it.
+    # The base branch is checked in the job condition instead, which lets the
+    # retarget-away event enter the concurrency group and cancel that review while
+    # its own job is skipped.
+    #
+    # `edited` also catches a retarget ONTO main, which GitHub reports as an edit
+    # rather than an open. `closed` is here only so closing or merging a PR cancels
+    # a review in flight; its job is skipped too, so it starts nothing.
     types: [opened, reopened, ready_for_review, synchronize, labeled, unlabeled, edited, closed]
 
 permissions:
@@ -46,6 +52,7 @@ jobs:
     # Label events only matter for the skip label. Reacting to every label would
     # re-run a paid review whenever someone tags a PR "bug".
     if: >-
+      github.event.pull_request.base.ref == 'main' &&
       github.event.pull_request.head.repo.full_name == github.event.pull_request.base.repo.full_name &&
       github.event.action != 'closed' &&
       (github.event.action != 'edited' || github.event.changes.base) &&
@@ -84,11 +91,26 @@ jobs:
           ctx="${RUNNER_TEMP}/pr"
           mkdir -p "${ctx}/head" "${ctx}/encoded"
 
+          max_patch=$((64 * 1024 * 1024))
+
           git fetch --no-tags origin "+refs/pull/${PR_NUMBER}/head:refs/remotes/pr/head"
-          git diff --find-renames --no-ext-diff "${BASE_SHA}...${HEAD_SHA}" > "${ctx}/pr-diff.patch"
+
+          # The patch renders blob CONTENT, so its size is unbounded relative to the
+          # pack that delivered it — highly compressible blobs arrive small and
+          # expand here. Capped before it reaches disk. `head -c` closing the pipe
+          # makes git take SIGPIPE, and `|| :` stops pipefail turning that into a
+          # dead step.
+          { git diff --find-renames --no-ext-diff "${BASE_SHA}...${HEAD_SHA}" || :; } \
+            | head -c "${max_patch}" > "${ctx}/pr-diff.patch"
+          if [ "$(wc -c < "${ctx}/pr-diff.patch")" -ge "${max_patch}" ]; then
+            printf '\n*** PATCH TRUNCATED AT %s BYTES. Use pr-files.txt for the file list and pr/head/ for content. ***\n' \
+              "${max_patch}" >> "${ctx}/pr-diff.patch"
+          fi
+
+          # These two render no blob content, so their size is bounded by the tree's
+          # path bytes. --name-status is also the authoritative changed-file list, so
+          # no .gitattributes setting can shorten it.
           git diff --find-renames --no-ext-diff --stat "${BASE_SHA}...${HEAD_SHA}" > "${ctx}/pr-stat.txt"
-          # Renders no content, so no .gitattributes setting can shorten it. This
-          # is the authoritative list of what changed.
           git diff --find-renames --name-status "${BASE_SHA}...${HEAD_SHA}" > "${ctx}/pr-files.txt"
 
           # The full post-change tree as plain files. The reviewer has no shell,
@@ -145,39 +167,25 @@ jobs:
 
           skip() { printf '%s\t%s\t%s\n' "$1" "$2" "$3" >> "${ctx}/unmaterialized.txt"; }
 
-          while IFS= read -r -d '' rec; do
-            # record: <mode> SP <type> SP <sha> SP <size> TAB <path>
-            # `-l` RIGHT-ALIGNS size in a padded field, so the metadata has runs of
-            # spaces in it. Split it with default IFS, which collapses those runs;
-            # suffix stripping does not, and silently yields an empty sha.
-            meta="${rec%%$'\t'*}"
-            path="${rec#*$'\t'}"
-            read -r mode _type sha size <<<"${meta}"
-            # A gitlink reports "-" for size.
-            case "${size}" in ''|*[!0-9]*) size=0 ;; esac
+          # Changed paths are materialized FIRST and so get the budget first. That is
+          # the right priority on its own terms — the review is about them — and it
+          # also means a tree padded with large, lexically-early blobs cannot starve
+          # the files actually under review.
+          #
+          # Keys are prefixed with "k" because a bare subscript of `*` or `@` means
+          # "every element" to bash, and a file may legally be named `*`.
+          declare -A changed=()
+          while IFS= read -r -d '' p; do
+            changed["k${p}"]=1
+          done < <(git diff --name-only -z "${BASE_SHA}...${HEAD_SHA}")
 
-            # A submodule entry has no blob in this repository to write.
-            if [ "${mode}" = 160000 ]; then
-              skip "${sha}" gitlink "${path}"
-              continue
-            fi
+          symlinks=()
 
-            if [ "${size}" -gt "${max_blob}" ] || [ $((total + size)) -gt "${max_total}" ]; then
-              skip "${sha}" "over-budget-${size}-bytes" "${path}"
-              continue
-            fi
-
-            # Symlink blobs are written as REGULAR files holding the target text,
-            # under a suffixed name. Never as a symlink — the target is data to be
-            # reviewed, not a pointer to follow — and never silently dropped, which
-            # is what the earlier `continue` did. A PR adding a link to /etc/passwd
-            # is a finding, and the reviewer could not previously see it at all.
-            dest="${path}"
-            [ "${mode}" = 120000 ] && dest="${path}.symlink-target"
-
+          write_blob() {  # sha, destination relative to head/, path to report
+            local sha="$1" dest="$2" report="$3" out wrote=1
             # An invalid UTF-8 byte in a path cannot be expressed in the JSON of a
-            # Read call, so the file would be on disk and unopenable. Those get an
-            # ASCII alias plus a map entry rather than being silently unreadable.
+            # Read call, so the file would sit on disk and be unopenable. Those get
+            # an ASCII alias plus a map entry instead of being silently unreadable.
             if printf '%s' "${dest}" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1; then
               out="${ctx}/head/${dest}"
             else
@@ -185,8 +193,6 @@ jobs:
               out="${ctx}/encoded/${encoded}"
               printf '%s\t%s\t%s\n' "${encoded}" "${sha}" "${dest}" >> "${ctx}/encoded-names.txt"
             fi
-
-            wrote=1
             case "${out}" in */*) mkdir -p -- "${out%/*}" || wrote=0 ;; esac
             if [ "${wrote}" = 1 ]; then
               git cat-file blob "${sha}" > "${out}" 2>/dev/null || wrote=0
@@ -198,11 +204,73 @@ jobs:
               # ENAMETOOLONG rather than the ENOENT that -f forgives, and cleanup
               # must never be the thing that aborts the step.
               rm -f -- "${out}" 2>/dev/null || :
-              skip "${sha}" unwritable "${path}"
-              continue
+              skip "${sha}" unwritable "${report}"
+              return 1
             fi
-            total=$((total + size))
-          done < <(git ls-tree -r -l -z "${HEAD_SHA}")
+            return 0
+          }
+
+          materialize_pass() {  # "changed" or "rest"
+            local want="$1" rec meta path mode _type sha size klass
+            while IFS= read -r -d '' rec; do
+              # record: <mode> SP <type> SP <sha> SP <size> TAB <path>
+              # `-l` RIGHT-ALIGNS size in a padded field, so the metadata contains
+              # runs of spaces. Split with default IFS, which collapses those runs;
+              # suffix stripping does not, and silently yields an empty sha.
+              meta="${rec%%$'\t'*}"
+              path="${rec#*$'\t'}"
+              read -r mode _type sha size <<<"${meta}"
+              # A gitlink reports "-" for size.
+              case "${size}" in ''|*[!0-9]*) size=0 ;; esac
+
+              if [ -n "${changed[k${path}]+x}" ]; then klass=changed; else klass=rest; fi
+              [ "${klass}" = "${want}" ] || continue
+
+              # A submodule entry has no blob in this repository to write.
+              if [ "${mode}" = 160000 ]; then
+                skip "${sha}" gitlink "${path}"
+                continue
+              fi
+
+              if [ "${size}" -gt "${max_blob}" ] || [ $((total + size)) -gt "${max_total}" ]; then
+                skip "${sha}" "over-budget-${size}-bytes" "${path}"
+                continue
+              fi
+
+              # Symlinks are deferred to a final pass; see below for why.
+              if [ "${mode}" = 120000 ]; then
+                symlinks+=("${sha}"$'\t'"${path}")
+                total=$((total + size))
+                continue
+              fi
+
+              if write_blob "${sha}" "${path}" "${path}"; then
+                total=$((total + size))
+              fi
+            done < <(git ls-tree -r -l -z "${HEAD_SHA}")
+          }
+
+          materialize_pass changed
+          materialize_pass rest
+
+          # Symlink blobs become REGULAR files holding the target as text. Never a
+          # symlink — the target is data to review, not a pointer to follow — and
+          # never dropped, since a PR adding a link to /etc/passwd is a finding the
+          # reviewer has to be able to see.
+          #
+          # Last, and collision-checked, because `foo.symlink-target` is itself a
+          # legal path a head can contain. ls-tree emits `foo` before it, so writing
+          # this inline let the regular blob silently overwrite the saved target and
+          # present itself as the link's destination.
+          if [ "${#symlinks[@]}" -gt 0 ]; then
+            for entry in "${symlinks[@]}"; do
+              sha="${entry%%$'\t'*}"
+              path="${entry#*$'\t'}"
+              dest="${path}.symlink-target"
+              while [ -e "${ctx}/head/${dest}" ]; do dest="${dest}.x"; done
+              write_blob "${sha}" "${dest}" "${path}" || :
+            done
+          fi
 
           # Agent memory and settings, at EVERY depth, not just the root: Claude
           # Code loads a descendant CLAUDE.md when it reads a file in that subtree,
