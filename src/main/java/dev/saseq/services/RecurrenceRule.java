@@ -3,7 +3,10 @@ package dev.saseq.services;
 import net.dv8tion.jda.api.utils.data.DataArray;
 import net.dv8tion.jda.api.utils.data.DataObject;
 
+import java.time.OffsetDateTime;
+import java.time.format.DateTimeParseException;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Validation and rendering for a guild scheduled event's {@code recurrence_rule}.
@@ -28,6 +31,12 @@ public final class RecurrenceRule {
     /** Everything a client is allowed to send. Anything else is Discord's to populate. */
     private static final List<String> WRITABLE =
             List.of("frequency", "interval", "start", "by_weekday", "by_n_weekday", "by_month", "by_month_day");
+
+    /** Weekday sets Discord accepts on a daily rule. It rejects arbitrary selections. */
+    private static final List<Set<Integer>> DAILY_SETS = List.of(
+            Set.of(0, 1, 2, 3, 4),              // weekdays
+            Set.of(5, 6),                       // weekend
+            Set.of(0, 1, 2, 3, 4, 5, 6));       // every day
 
     private static final String[] FREQ_NAMES = {"yearly", "monthly", "weekly", "daily"};
     private static final String[] DAY_NAMES = {
@@ -117,12 +126,23 @@ public final class RecurrenceRule {
                                 + "not accept multi-day weekly rules; use frequency 3 (daily) with a known "
                                 + "weekday set instead.");
             }
+            java.util.TreeSet<Integer> set = new java.util.TreeSet<>();
             for (int i = 0; i < days.length(); i++) {
                 int day = days.getInt(i);
                 if (day < 0 || day > 6) {
                     throw new IllegalArgumentException(
                             "recurrence_rule.by_weekday values are 0=Monday through 6=Sunday, got " + day);
                 }
+                set.add(day);
+            }
+            if (frequency == DAILY && !DAILY_SETS.contains(set)) {
+                // Discord accepts only "known sets" for daily rules rather than an arbitrary
+                // selection of weekdays. The exact list is not enumerated in the docs, so this
+                // allows the documented examples plus every day, and names them in the error.
+                throw new IllegalArgumentException(
+                        "A daily recurrence_rule.by_weekday must be a known weekday set: "
+                                + "[0,1,2,3,4] weekdays, [5,6] weekend, or all seven days. "
+                                + "For a single day use frequency 2 (weekly) instead.");
             }
         }
 
@@ -167,6 +187,34 @@ public final class RecurrenceRule {
                 throw new IllegalArgumentException(
                         "recurrence_rule.by_month and by_month_day must each contain exactly one value");
             }
+            int month = rule.getArray("by_month").getInt(0);
+            if (month < 1 || month > 12) {
+                throw new IllegalArgumentException(
+                        "recurrence_rule.by_month must be 1 (January) through 12 (December), got " + month);
+            }
+            int monthDay = rule.getArray("by_month_day").getInt(0);
+            if (monthDay < 1 || monthDay > 31) {
+                throw new IllegalArgumentException(
+                        "recurrence_rule.by_month_day must be 1 through 31, got " + monthDay);
+            }
+        }
+
+        // Discord derives the series from a selector, and the one it wants depends on the
+        // frequency. Without this a rule like {"frequency": 2} passes every check above, the base
+        // event is created, and only the recurrence PATCH fails.
+        if (frequency == WEEKLY && !hasWeekday) {
+            throw new IllegalArgumentException(
+                    "A weekly recurrence_rule needs by_weekday, e.g. \"by_weekday\": [2] for Wednesday");
+        }
+        if (frequency == MONTHLY && !hasNWeekday) {
+            throw new IllegalArgumentException(
+                    "A monthly recurrence_rule needs by_n_weekday, e.g. \"by_n_weekday\": [{\"n\": 2, \"day\": 4}] "
+                            + "for the second Friday of each month");
+        }
+        if (frequency == YEARLY && !(hasMonth && hasMonthDay)) {
+            throw new IllegalArgumentException(
+                    "A yearly recurrence_rule needs by_month and by_month_day, "
+                            + "e.g. \"by_month\": [4], \"by_month_day\": [8] for 8 April");
         }
 
         if (!rule.hasKey("start") || rule.getString("start", "").isEmpty()) {
@@ -175,6 +223,17 @@ public final class RecurrenceRule {
                         "recurrence_rule.start is required and could not be defaulted from the event start time");
             }
             rule.put("start", start);
+        }
+        // Checked whether supplied or defaulted. The event's own start time is validated
+        // separately, so a rule carrying a malformed start of its own would otherwise create the
+        // event and fail only on the recurrence PATCH.
+        String anchor = rule.getString("start");
+        try {
+            OffsetDateTime.parse(anchor);
+        } catch (DateTimeParseException e) {
+            throw new IllegalArgumentException(
+                    "recurrence_rule.start must be an ISO8601 timestamp, e.g. 2026-08-05T20:00:00-05:00, got: "
+                            + anchor);
         }
         return rule;
     }

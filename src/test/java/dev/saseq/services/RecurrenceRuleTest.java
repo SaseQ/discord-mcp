@@ -139,6 +139,69 @@ class RecurrenceRuleTest {
     }
 
     @Test
+    void requiresTheSelectorEachFrequencyDependsOn() {
+        // Discord derives the series from a selector. Omitting it passes every other check, so the
+        // base event gets created and only the recurrence PATCH fails.
+        assertThatThrownBy(() -> RecurrenceRule.parse("{\"frequency\": 2}", START))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("weekly recurrence_rule needs by_weekday");
+
+        assertThatThrownBy(() -> RecurrenceRule.parse("{\"frequency\": 1}", START))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("needs by_n_weekday");
+
+        assertThatThrownBy(() -> RecurrenceRule.parse("{\"frequency\": 0}", START))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("needs by_month and by_month_day");
+
+        // Daily needs no selector: no by_weekday means every day.
+        assertThat(RecurrenceRule.parse("{\"frequency\": 3}", START).getInt("frequency"))
+                .isEqualTo(RecurrenceRule.DAILY);
+    }
+
+    @Test
+    void validatesYearlySelectorValues() {
+        assertThatThrownBy(() -> RecurrenceRule.parse(
+                "{\"frequency\": 0, \"by_month\": [0], \"by_month_day\": [8]}", START))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("1 (January) through 12");
+
+        assertThatThrownBy(() -> RecurrenceRule.parse(
+                "{\"frequency\": 0, \"by_month\": [4], \"by_month_day\": [32]}", START))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("1 through 31");
+
+        assertThat(RecurrenceRule.parse(
+                "{\"frequency\": 0, \"by_month\": [4], \"by_month_day\": [8]}", START)
+                .getArray("by_month").getInt(0)).isEqualTo(4);
+    }
+
+    @Test
+    void rejectsAStartThatIsNotATimestamp() {
+        // The event's own start time is validated separately, so a malformed anchor inside the
+        // rule would otherwise create the event and fail only on the recurrence PATCH.
+        assertThatThrownBy(() -> RecurrenceRule.parse(
+                "{\"frequency\": 2, \"by_weekday\": [2], \"start\": \"not-a-timestamp\"}", START))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("ISO8601");
+
+        assertThatThrownBy(() -> RecurrenceRule.parse("{\"frequency\": 2, \"by_weekday\": [2]}", "nonsense"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("ISO8601");
+    }
+
+    @Test
+    void acceptsOnlyKnownWeekdaySetsForDailyRules() {
+        assertThatThrownBy(() -> RecurrenceRule.parse("{\"frequency\": 3, \"by_weekday\": [0, 2, 4]}", START))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("known weekday set");
+
+        // Weekdays, weekend, and all seven are the accepted sets.
+        assertThat(RecurrenceRule.parse("{\"frequency\": 3, \"by_weekday\": [5,6]}", START)).isNotNull();
+        assertThat(RecurrenceRule.parse("{\"frequency\": 3, \"by_weekday\": [0,1,2,3,4,5,6]}", START)).isNotNull();
+    }
+
+    @Test
     void withStartDropsServerOwnedFieldsAndMovesTheAnchor() {
         // Shaped like a real GET response: Discord returns count/end/by_year_day, and echoing
         // them back on a PATCH is rejected.
