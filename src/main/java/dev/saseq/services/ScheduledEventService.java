@@ -25,12 +25,13 @@ public class ScheduledEventService {
     private final JDA jda;
 
     static final String RECURRENCE_PARAM =
-            "Recurrence rule as JSON, e.g. {\"frequency\": 2, \"interval\": 1, \"by_weekday\": [2]} "
-                    + "for weekly on Wednesday. frequency: 0=yearly, 1=monthly, 2=weekly, 3=daily. "
+            "Recurrence rule as JSON. {\"frequency\": 2} is usually all you need: it recurs weekly "
+                    + "on whatever the start time falls on. frequency: 0=yearly, 1=monthly, 2=weekly, 3=daily. "
                     + "by_weekday: 0=Monday..6=Sunday, and a weekly rule accepts exactly one day. "
-                    + "For weekly, monthly and yearly the selector is derived from the start time when "
-                    + "omitted, and must agree with it when supplied, since the start is the first "
-                    + "occurrence. Usually you only need frequency. "
+                    + "IMPORTANT: Discord evaluates recurrence against the UTC date of the start time, "
+                    + "not its local date, so a 22:00 US-Eastern event recurs on the FOLLOWING weekday. "
+                    + "Prefer to omit the selector: for weekly, monthly and yearly it is derived from the "
+                    + "start time correctly, and a supplied one must match the UTC date or it is rejected. "
                     + "interval may exceed 1 only for weekly (every-other-week). "
                     + "by_n_weekday is monthly only; by_month with by_month_day is yearly only. "
                     + "count, end and by_year_day are set by Discord and must be omitted. "
@@ -107,7 +108,11 @@ public class ScheduledEventService {
 
     /** The event's recurrence rule, or null if it is not a recurring event. */
     private DataObject recurrenceOf(DataObject raw) {
-        return raw.isNull("recurrence_rule") ? null : raw.getObject("recurrence_rule");
+        // Tolerates an absent key as well as an explicit null, so it is safe to call with the empty
+        // object used when a best-effort read failed.
+        return !raw.hasKey("recurrence_rule") || raw.isNull("recurrence_rule")
+                ? null
+                : raw.getObject("recurrence_rule");
     }
 
     /**
@@ -365,9 +370,30 @@ public class ScheduledEventService {
 
         // Read the live event before touching it: JDA cannot tell us whether this is a recurring
         // series, and that changes what a start-time edit means.
-        DataObject raw = fetchRaw(guild.getId(), event.getId());
-        DataObject existingRecurrence = recurrenceOf(raw);
         boolean movingStart = scheduledStartTime != null && !scheduledStartTime.isEmpty();
+        // Needed only when recurrence is actually in play: to know whether a start move is also a
+        // series move, or whether there is a rule to clear. For a plain rename it feeds nothing but
+        // an informational line, and a transient failure on this route must not stop an otherwise
+        // independent edit from being attempted at all.
+        boolean recurrenceRelevant = movingStart
+                || (recurrenceRule != null && !recurrenceRule.isEmpty());
+        DataObject raw;
+        boolean recurrenceReadFailed = false;
+        String recurrenceReadError = null;
+        try {
+            raw = fetchRaw(guild.getId(), event.getId());
+        } catch (RuntimeException e) {
+            if (recurrenceRelevant) {
+                throw new IllegalArgumentException(
+                        "Could not read the event's current recurrence, which this edit depends on"
+                                + (e.getMessage() == null ? "" : ": " + e.getMessage())
+                                + ". Nothing was changed.");
+            }
+            raw = DataObject.empty();
+            recurrenceReadFailed = true;
+            recurrenceReadError = e.getMessage();
+        }
+        DataObject existingRecurrence = recurrenceOf(raw);
 
         // Validate the recurrence BEFORE anything is persisted. manager.complete() below is not
         // undoable, so parsing afterwards would report failure on a request that had already
@@ -475,6 +501,16 @@ public class ScheduledEventService {
             } else {
                 result.append("\n  • Recurrence is now: ").append(after);
             }
+        } else if (recurrenceReadFailed) {
+            // listScheduledEvents refuses to let a failed read read as "nothing recurs", and this
+            // path must not either: the note below is the one that stops a recurring event from
+            // being edited as though it were a one-off.
+            // Flagged by its own boolean rather than by the message being non-null: getMessage()
+            // can return null, and keying off it made this note vanish entirely, rendering as
+            // "does not recur" — the one thing the comment above says this path must never do.
+            result.append("\n  • Note: this event's recurrence could not be read")
+                    .append(recurrenceReadError == null ? "" : " (" + recurrenceReadError + ")")
+                    .append(", so it may be a recurring event that is not reported here.");
         } else if (existingRecurrence != null) {
             result.append("\n  • Note: this is a recurring event (")
                     .append(RecurrenceRule.describe(existingRecurrence))

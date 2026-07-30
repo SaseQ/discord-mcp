@@ -3,7 +3,9 @@ package dev.saseq.services;
 import net.dv8tion.jda.api.utils.data.DataArray;
 import net.dv8tion.jda.api.utils.data.DataObject;
 
+import java.math.BigDecimal;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Set;
@@ -58,8 +60,8 @@ public final class RecurrenceRule {
             rule = DataObject.fromJson(json);
         } catch (RuntimeException e) {
             throw new IllegalArgumentException(
-                    "recurrenceRule must be a JSON object, for example "
-                            + "{\"frequency\": 2, \"interval\": 1, \"by_weekday\": [2]} for weekly on Wednesday. "
+                    "recurrenceRule must be a JSON object. {\"frequency\": 2} is usually all you need "
+                            + "- it recurs weekly on whatever the start time falls on. "
                             + "Parse error: " + e.getMessage());
         }
 
@@ -82,24 +84,22 @@ public final class RecurrenceRule {
             }
         }
 
-        if (!rule.hasKey("frequency")) {
+        if (!rule.hasKey("frequency") || rule.isNull("frequency")) {
             throw new IllegalArgumentException(
                     "recurrence_rule.frequency is required: 0=yearly, 1=monthly, 2=weekly, 3=daily");
         }
+        requireWholeNumber(rule, "frequency", "recurrence_rule.frequency");
         int frequency = rule.getInt("frequency");
         if (frequency < 0 || frequency > 3) {
             throw new IllegalArgumentException(
                     "recurrence_rule.frequency must be 0 (yearly), 1 (monthly), 2 (weekly), or 3 (daily)");
         }
 
-        // getInt would quietly truncate 1.9 to 1 and then write the result back, turning an
-        // unsupported interval into a silently different schedule.
-        if (rule.hasKey("interval") && rule.get("interval") instanceof Number number
-                && number.doubleValue() != Math.floor(number.doubleValue())) {
-            throw new IllegalArgumentException(
-                    "recurrence_rule.interval must be a whole number, got " + number);
+        boolean hasInterval = rule.hasKey("interval") && !rule.isNull("interval");
+        if (hasInterval) {
+            requireWholeNumber(rule, "interval", "recurrence_rule.interval");
         }
-        int interval = rule.hasKey("interval") ? rule.getInt("interval") : 1;
+        int interval = hasInterval ? rule.getInt("interval") : 1;
         if (interval < 1) {
             throw new IllegalArgumentException("recurrence_rule.interval must be at least 1");
         }
@@ -122,7 +122,7 @@ public final class RecurrenceRule {
         // "not set", but an empty array still ships in the payload and Discord rejects it, so it
         // has to be caught here rather than skipped over.
         for (String selector : List.of("by_weekday", "by_n_weekday", "by_month", "by_month_day")) {
-            if (rule.hasKey(selector) && !rule.isNull(selector) && rule.getArray(selector).isEmpty()) {
+            if (rule.hasKey(selector) && !rule.isNull(selector) && arrayOf(rule, selector).isEmpty()) {
                 throw new IllegalArgumentException(
                         "recurrence_rule." + selector + " is empty. Give it a value or omit the field entirely.");
             }
@@ -154,6 +154,10 @@ public final class RecurrenceRule {
                                 + "not accept multi-day weekly rules; use frequency 3 (daily) with a known "
                                 + "weekday set instead.");
             }
+            // Daily rules have no later selector comparison to catch a truncated value, so a set
+            // like [0.9, 1.9, ...] would otherwise validate as weekdays and ship its fractions.
+            requireWholeNumbers(rule, "by_weekday", "recurrence_rule.by_weekday");
+            days = rule.getArray("by_weekday");
             java.util.TreeSet<Integer> set = new java.util.TreeSet<>();
             for (int i = 0; i < days.length(); i++) {
                 int day = days.getInt(i);
@@ -184,16 +188,16 @@ public final class RecurrenceRule {
                 throw new IllegalArgumentException(
                         "recurrence_rule.by_n_weekday must contain exactly one entry");
             }
-            DataObject nth = entries.getObject(0);
-            for (String field : List.of("n", "day")) {
-                // Same truncation trap as interval: getInt would turn 1.9 into 1 while the
-                // fraction stays in the payload and goes to Discord.
-                if (nth.hasKey(field) && nth.get(field) instanceof Number number
-                        && number.doubleValue() != Math.floor(number.doubleValue())) {
-                    throw new IllegalArgumentException(
-                            "recurrence_rule.by_n_weekday " + field + " must be a whole number, got " + number);
-                }
+            DataObject nth;
+            try {
+                nth = entries.getObject(0);
+            } catch (RuntimeException e) {
+                throw new IllegalArgumentException(
+                        "recurrence_rule.by_n_weekday entries must be objects, "
+                                + "for example [{\"n\": 2, \"day\": 4}]");
             }
+            requireWholeNumber(nth, "n", "recurrence_rule.by_n_weekday n");
+            requireWholeNumber(nth, "day", "recurrence_rule.by_n_weekday day");
             if (!nth.hasKey("n") || !nth.hasKey("day")) {
                 throw new IllegalArgumentException(
                         "recurrence_rule.by_n_weekday entries need both n and day, "
@@ -224,6 +228,8 @@ public final class RecurrenceRule {
                 throw new IllegalArgumentException(
                         "recurrence_rule.by_month and by_month_day must each contain exactly one value");
             }
+            requireWholeNumbers(rule, "by_month", "recurrence_rule.by_month");
+            requireWholeNumbers(rule, "by_month_day", "recurrence_rule.by_month_day");
             int month = rule.getArray("by_month").getInt(0);
             if (month < 1 || month > 12) {
                 throw new IllegalArgumentException(
@@ -288,17 +294,120 @@ public final class RecurrenceRule {
                 }
             }
             if (!want.equals(got)) {
+                // Only blame the timezone when the anchor actually crosses a date boundary.
+                // Otherwise the explanation is false and the advice is harmful: for a midday start
+                // the caller almost certainly mistyped the date, and "omit the selector" would give
+                // them the wrong series reported as success.
+                boolean crossesDate = !moment.toLocalDate()
+                        .equals(moment.withOffsetSameInstant(ZoneOffset.UTC).toLocalDate());
+                String omit = selector.startsWith("by_month") ? "by_month and by_month_day" : selector;
                 throw new IllegalArgumentException(
-                        "recurrence_rule." + selector + " is " + got + " but start (" + anchor
-                                + ") falls on " + want + ". The anchor is the first occurrence, so they must "
-                                + "agree. Move start to the date you want, and the selector follows.");
+                        "recurrence_rule." + selector + " is " + got + " but start " + anchor
+                                + " is " + moment.withOffsetSameInstant(ZoneOffset.UTC).toLocalDate()
+                                + " in UTC, which is " + want + ". "
+                                + (crossesDate
+                                ? "Discord evaluates recurrence against the UTC date, and this start crosses "
+                                + "into the next day in UTC. The start time is almost certainly right - omit "
+                                + omit + " and it is derived correctly."
+                                : "The anchor is the first occurrence, so they must agree. Move start to the "
+                                + "date you want, or omit " + omit + " to derive it from the start."));
             }
         }
         return rule;
     }
 
+    /**
+     * Reject a JSON number that is not a whole number.
+     *
+     * <p>{@code getInt} truncates silently, so 1.9 would validate as 1 while the fraction stayed in
+     * the payload and went to Discord — an unsupported value quietly becoming a different schedule
+     * rather than an error. Shared because this has now been missed on four separate fields.
+     */
+    private static void requireWholeNumber(DataObject holder, String key, String label) {
+        // An explicit JSON null is handled here rather than left to the consumer's getInt, which
+        // would raise a bare ParsingException that escapes parse() entirely. Callers for whom null
+        // means "absent" test that themselves before calling.
+        if (!holder.hasKey(key)) {
+            return;
+        }
+        if (holder.isNull(key)) {
+            throw new IllegalArgumentException(label + " must be a number, got null");
+        }
+        int value = wholeValueOf(holder.getString(key, ""), label);
+        // Normalised, not just checked. Otherwise a whole-valued double or the string "2.0"
+        // survives into the payload: the agreement check compares DataArray.toString(), so [3.0]
+        // reads as disagreeing with [3], and getInt on "2.0" throws NumberFormatException naming
+        // no field. interval has always been written back; everything else now is too.
+        holder.put(key, value);
+    }
+
+    /** Array form, for the selectors whose elements are numbers. Normalises in place. */
+    private static void requireWholeNumbers(DataObject holder, String key, String label) {
+        DataArray values = arrayOf(holder, key);
+        DataArray normalized = DataArray.empty();
+        for (int i = 0; i < values.length(); i++) {
+            String element = values.getString(i, null);
+            if (element == null) {
+                throw new IllegalArgumentException(label + " values must be numbers, got null");
+            }
+            normalized.add(wholeValueOf(element, label + " values"));
+        }
+        holder.put(key, normalized);
+    }
+
+    /**
+     * Read a number exactly, reject it unless it is whole, and return it as an int.
+     *
+     * <p>{@link BigDecimal} rather than {@code double} because double loses exactly the cases that
+     * matter: {@code "1e-400"} underflows to 0.0 and would pass as whole, silently becoming a
+     * yearly rule, and {@code "2.0000000000000001"} rounds to 2. Both are then written back as if
+     * the caller had asked for them.
+     *
+     * <p>This covers <em>quoted</em> spellings only. An unquoted JSON float is already a
+     * {@code Double} by the time it reaches this class, because the rule is parsed by JDA's own
+     * mapper without {@code USE_BIG_DECIMAL_FOR_FLOATS}, so the precision is gone before any check
+     * here can see it. Closing that would mean parsing the caller's JSON separately rather than
+     * reusing JDA's, which is more machinery than the remaining exposure justifies.
+     */
+    private static int wholeValueOf(String raw, String label) {
+        BigDecimal value;
+        try {
+            value = new BigDecimal(raw.trim());
+        } catch (RuntimeException e) {
+            throw new IllegalArgumentException(label + " must be a number, got " + raw);
+        }
+        if (value.stripTrailingZeros().scale() > 0) {
+            throw new IllegalArgumentException(label + " must be a whole number, got " + raw);
+        }
+        try {
+            return value.intValueExact();
+        } catch (ArithmeticException e) {
+            throw new IllegalArgumentException(label + " is out of range, got " + raw);
+        }
+    }
+
+    /**
+     * Reads an array field, naming it if the caller sent something that is not one.
+     *
+     * <p>The example is per-key on purpose. A single hard-coded {@code [2]} sent a caller who put
+     * an object where by_n_weekday's array belongs straight into a second failure about entry
+     * shape — two round trips from a helper whose whole job is to show the right shape first time.
+     */
+    private static DataArray arrayOf(DataObject holder, String key) {
+        try {
+            return holder.getArray(key);
+        } catch (RuntimeException e) {
+            throw new IllegalArgumentException(
+                    "recurrence_rule." + key + " must be an array, for example "
+                            + (key.equals("by_n_weekday") ? "[{\"n\": 2, \"day\": 4}]" : "[2]"));
+        }
+    }
+
     private static boolean hasArray(DataObject rule, String key) {
-        return rule.hasKey(key) && !rule.isNull(key) && rule.getArray(key).length() > 0;
+        // arrayOf, not getArray: this is only reached after the empty-selector loop has already
+        // guarded these four keys, and relying on that ordering means adding a fifth array
+        // selector without adding it to that loop would reintroduce the bare parsing exception.
+        return rule.hasKey(key) && !rule.isNull(key) && arrayOf(rule, key).length() > 0;
     }
 
     /**
@@ -345,7 +454,13 @@ public final class RecurrenceRule {
      * <p>Shared so that rebuilding a rule and validating a caller's rule cannot disagree about
      * which weekday, month day, or nth-weekday a given anchor implies.
      */
-    private static void applySelectors(DataObject target, int frequency, OffsetDateTime moment) {
+    private static void applySelectors(DataObject target, int frequency, OffsetDateTime anchor) {
+        // UTC, not the anchor's own offset. Confirmed against a live recurring event: an event at
+        // 2026-06-26T02:00:00+00:00 — Thursday 22:00 in US Eastern, Friday in UTC — is stored by
+        // Discord with by_weekday [4], Friday. Deriving from the local date would have produced
+        // Thursday and put the series on the wrong day, and it also made two spellings of the same
+        // instant yield different schedules.
+        OffsetDateTime moment = anchor.withOffsetSameInstant(ZoneOffset.UTC);
         int weekday = moment.getDayOfWeek().getValue() - 1;   // java Monday=1, Discord Monday=0
         switch (frequency) {
             case WEEKLY -> target.put("by_weekday", DataArray.empty().add(weekday));
@@ -384,23 +499,34 @@ public final class RecurrenceRule {
                 if (i > 0) names.append(", ");
                 names.append(day >= 0 && day <= 6 ? DAY_NAMES[day] : String.valueOf(day));
             }
-            sb.append(" on ").append(names);
+            sb.append(" on ").append(names).append(" (UTC)");
         }
         if (hasArray(rule, "by_month_day")) {
             sb.append(" on day ").append(rule.getArray("by_month_day").getInt(0));
             if (hasArray(rule, "by_month")) {
                 sb.append(" of month ").append(rule.getArray("by_month").getInt(0));
             }
+            sb.append(" (UTC)");
         }
         if (hasArray(rule, "by_n_weekday")) {
             DataObject nth = rule.getArray("by_n_weekday").getObject(0);
             int day = nth.getInt("day", -1);
             sb.append(" on occurrence ").append(nth.getInt("n", 0))
-                    .append(" of ").append(day >= 0 && day <= 6 ? DAY_NAMES[day] : String.valueOf(day));
+                    .append(" of ").append(day >= 0 && day <= 6 ? DAY_NAMES[day] : String.valueOf(day))
+                    .append(" (UTC)");
         }
         String start = rule.getString("start", null);
         if (start != null && !start.isEmpty()) {
-            sb.append(", anchored at ").append(start);
+            // Normalised to UTC so the anchor agrees with the weekday above it. Left as-is, a
+            // Thursday-in-UTC series reads "on Thursday (UTC), anchored at 2026-08-05T20:00-05:00"
+            // — a Wednesday — which looks self-contradictory to the model reading it, and invites
+            // exactly the wrong-day correction the mismatch error warns against.
+            try {
+                sb.append(", anchored at ")
+                        .append(OffsetDateTime.parse(start).withOffsetSameInstant(ZoneOffset.UTC));
+            } catch (DateTimeParseException e) {
+                sb.append(", anchored at ").append(start);
+            }
         }
         return sb.toString();
     }
