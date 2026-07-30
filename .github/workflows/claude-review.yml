@@ -317,6 +317,11 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ github.token }}
+          # Without this the action never creates the tracking comment, so
+          # mcp__github_comment__update_claude_comment has nothing to update and
+          # the review is produced and then discarded. Observed on the first live
+          # run: 12 turns, no errors, no permission denials, and no output.
+          use_sticky_comment: "true"
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
@@ -410,6 +415,7 @@ jobs:
             }
           claude_args: |
             --safe-mode
+            --model claude-opus-5
             --max-turns 100
             --tools "Read"
             --allowedTools "Read,mcp__github_comment__update_claude_comment"
