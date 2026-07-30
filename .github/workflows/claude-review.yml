@@ -41,11 +41,10 @@ concurrency:
 jobs:
   review:
     name: Claude review
-    # Kill switch. The reviewer currently analyses a PR and then cannot publish
-    # the result, so every run is pure cost. Unset or anything other than 'true'
-    # keeps it off, which is the right default for a switch that exists because
-    # something is broken. Re-enable with:
+    # Cost switch. A review is roughly a dollar on Opus, so it is opt-in rather
+    # than on by default. Unset or anything other than 'true' keeps it off.
     #   gh variable set CLAUDE_REVIEW_ENABLED --repo BASIC-BIT/discord-mcp --body true
+    #   gh variable set CLAUDE_REVIEW_ENABLED --repo BASIC-BIT/discord-mcp --body false
     #
     # Same-repo heads only: pull_request_target runs with base-repo permissions,
     # so a fork's head must never reach the token.
@@ -425,10 +424,16 @@ jobs:
                 ]
               }
             }
+          # No --tools here, deliberately. That flag sets which tools EXIST ("the list of
+          # available tools from the built-in set"), and --allowedTools only filters what already
+          # exists. Setting --tools "Read" while permitting the MCP comment tool meant permitting
+          # something that was never registered: the reviewer analysed the PR properly and then had
+          # no way to say so, with zero permission denials because nothing was ever denied.
+          # Restriction now comes from --allowedTools plus the deny block above, which also beats
+          # tag mode's broader injected defaults.
           claude_args: |
             --safe-mode
             --model claude-opus-5
             --max-turns 100
-            --tools "Read,ToolSearch"
             --allowedTools "Read,ToolSearch,mcp__github_comment__update_claude_comment"
             --add-dir "${{ runner.temp }}/pr"
