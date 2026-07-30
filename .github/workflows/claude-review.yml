@@ -41,6 +41,12 @@ concurrency:
 jobs:
   review:
     name: Claude review
+    # Kill switch. The reviewer currently analyses a PR and then cannot publish
+    # the result, so every run is pure cost. Unset or anything other than 'true'
+    # keeps it off, which is the right default for a switch that exists because
+    # something is broken. Re-enable with:
+    #   gh variable set CLAUDE_REVIEW_ENABLED --repo BASIC-BIT/discord-mcp --body true
+    #
     # Same-repo heads only: pull_request_target runs with base-repo permissions,
     # so a fork's head must never reach the token.
     #
@@ -52,6 +58,7 @@ jobs:
     # Label events only matter for the skip label. Reacting to every label would
     # re-run a paid review whenever someone tags a PR "bug".
     if: >-
+      vars.CLAUDE_REVIEW_ENABLED == 'true' &&
       github.event.pull_request.base.ref == 'main' &&
       github.event.pull_request.head.repo.full_name == github.event.pull_request.base.repo.full_name &&
       github.event.action != 'closed' &&
