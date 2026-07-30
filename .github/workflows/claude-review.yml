@@ -65,24 +65,39 @@ jobs:
           git fetch --no-tags origin "+refs/pull/${PR_NUMBER}/head:refs/remotes/pr/head"
           git diff --find-renames --no-ext-diff "${BASE_SHA}...${HEAD_SHA}" > "${ctx}/pr-diff.patch"
           git diff --find-renames --no-ext-diff --stat "${BASE_SHA}...${HEAD_SHA}" > "${ctx}/pr-stat.txt"
+          # Renders no content, so no .gitattributes setting can shorten it. This
+          # is the authoritative list of what changed.
+          git diff --find-renames --name-status "${BASE_SHA}...${HEAD_SHA}" > "${ctx}/pr-files.txt"
 
           # The full post-change tree as plain files. The reviewer has no shell,
           # so `git show` is not available to it; this is how it reads a changed
           # file in full instead of guessing from a hunk.
           #
-          # Everything below strips things that would let this tree act instead of
-          # just being read. All of it stays visible in pr-diff.patch, so nothing
-          # becomes unreviewable — it only stops being loadable or dereferenceable.
-          git archive "${HEAD_SHA}" | tar -x -C "${ctx}/head"
+          # Materialized blob by blob rather than with `git archive`, for two
+          # reasons, both of which are about the head not getting to choose what
+          # the reviewer sees or touches:
+          #
+          #   1. `git archive` honors export-ignore from the head's OWN
+          #      .gitattributes. A PR adding `payload.bin export-ignore` would be
+          #      omitted from the archive entirely — the reviewer silently receives
+          #      no bytes for the file most worth reading. `cat-file` honors no
+          #      attributes.
+          #   2. Modes 120000 and 160000 are skipped, so no symlink or gitlink is
+          #      ever created here. That kills the symlink vector at its source
+          #      instead of deleting links after the fact: a path rule such as
+          #      Read(//proc/**) matches the path ASKED FOR, never the resolved
+          #      one, and the memory loader is not a tool call so no rule reaches
+          #      it at all.
+          #
+          # Nothing skipped becomes unreviewable — pr-diff.patch and pr-files.txt
+          # still show all of it. It only stops being loadable or dereferenceable.
+          while IFS=$'\t' read -r -d '' meta path; do
+            case "${meta%% *}" in 120000|160000) continue ;; esac
+            mkdir -p "${ctx}/head/$(dirname "${path}")"
+            git cat-file blob "${meta##* }" > "${ctx}/head/${path}"
+          done < <(git ls-tree -r -z "${HEAD_SHA}")
 
-          # Symlinks first. git archive preserves mode 120000, so a link named
-          # notes.txt can target /proc/self/environ. A path-pattern rule like
-          # Read(//proc/**) matches the path ASKED FOR, never the resolved one, and
-          # the memory loader is not a tool call so no rule applies to it at all.
-          # A pointer out of the tree is not reviewable content; delete them.
-          find "${ctx}/head" -type l -delete
-
-          # Then agent memory and settings, at EVERY depth, not just the root.
+          # Agent memory and settings, at EVERY depth, not just the root.
           # Claude Code loads a descendant CLAUDE.md when it reads a file in that
           # subtree, and the prompt below tells it to read files in this subtree.
           find "${ctx}/head" \
@@ -109,9 +124,14 @@ jobs:
             The working tree is the BASE commit, not the PR head, so the files on
             disk do not contain this PR's changes. Read the change from:
 
+            - ${{ runner.temp }}/pr/pr-files.txt  — every changed path, authoritative
             - ${{ runner.temp }}/pr/pr-diff.patch — the full diff
-            - ${{ runner.temp }}/pr/pr-stat.txt   — the file list
+            - ${{ runner.temp }}/pr/pr-stat.txt   — per-file line counts
             - ${{ runner.temp }}/pr/head/<path>   — any file as it is AFTER the change
+
+            If pr-files.txt lists a path that pr-diff.patch does not show usefully,
+            read the file under pr/head/ and review it there. Do not skip a changed
+            file because the diff was unhelpful.
 
             Open the file under pr/head/ whenever a hunk needs more context than
             the diff gives, which is most of the time for anything non-trivial.
