@@ -9,13 +9,6 @@ import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.net.HttpURLConnection;
-import java.net.InetAddress;
-import java.net.URI;
-import java.net.URLConnection;
-import java.net.UnknownHostException;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
@@ -210,8 +203,6 @@ public class EmojiService {
 
     // Discord caps custom emoji uploads at 256 KiB; allow some headroom but bound the read.
     private static final int MAX_IMAGE_BYTES = 8 * 1024 * 1024;
-    private static final int CONNECT_TIMEOUT_MS = 5000;
-    private static final int READ_TIMEOUT_MS = 10000;
 
     private byte[] downloadImage(String url) {
         return RemoteFetchGuard.fetch(url, MAX_IMAGE_BYTES, "image");
