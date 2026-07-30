@@ -70,6 +70,17 @@ public final class RecurrenceRule {
                                 + "populates it. Remove it from the rule.");
             }
         }
+        // Anything outside the writable schema is refused rather than forwarded. A near-miss such
+        // as "by_weekdays" would otherwise sail through — daily needs no selector, so nothing else
+        // would catch it — and Discord would either reject the PATCH after the event exists or
+        // silently ignore the key and produce a different schedule than the one asked for.
+        for (String key : rule.keys()) {
+            if (!WRITABLE.contains(key)) {
+                throw new IllegalArgumentException(
+                        "recurrence_rule has an unrecognised field \"" + key + "\". Allowed fields are "
+                                + String.join(", ", WRITABLE) + ".");
+            }
+        }
 
         if (!rule.hasKey("frequency")) {
             throw new IllegalArgumentException(

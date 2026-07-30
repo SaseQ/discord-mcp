@@ -242,6 +242,17 @@ public class ScheduledEventService {
         if (recurrenceRule != null && !recurrenceRule.isEmpty() && !clearingRecurrence) {
             String anchor = movingStart ? scheduledStartTime : raw.getString("scheduled_start_time", null);
             newRule = RecurrenceRule.parse(recurrenceRule, anchor);
+            // A rule may carry its own start, which parse() keeps. Combined with a start-time move
+            // that produces an event whose scheduled_start_time and recurrence anchor disagree,
+            // and the series follows the anchor — the snap-back this tool promises to prevent.
+            // The two are ambiguous together, so say so rather than silently picking one.
+            if (movingStart && !newRule.getString("start", "").equals(scheduledStartTime)) {
+                throw new IllegalArgumentException(
+                        "scheduledStartTime is " + scheduledStartTime + " but the recurrence rule anchors at "
+                                + newRule.getString("start", "") + ". They must match, or the series would "
+                                + "follow the anchor and ignore the new start time. Omit start from the rule "
+                                + "to have it default to the new start time.");
+            }
         }
         if (clearingRecurrence && existingRecurrence == null) {
             throw new IllegalArgumentException(
@@ -254,11 +265,17 @@ public class ScheduledEventService {
         // a change that had already half happened and cannot be undone.
         boolean terminalStatus = status != null && !status.isEmpty()
                 && (status.trim().equals("3") || status.trim().equals("4"));
-        if (terminalStatus && (newRule != null || clearingRecurrence)) {
+        // The implicit anchor move counts too: moving the start of a recurring event triggers a
+        // recurrence PATCH even with no recurrenceRule supplied, and that write would land after
+        // the terminal transition just the same.
+        boolean touchesRecurrence = newRule != null || clearingRecurrence
+                || (existingRecurrence != null && movingStart);
+        if (terminalStatus && touchesRecurrence) {
             throw new IllegalArgumentException(
                     "Refusing to change recurrence while completing or cancelling this event. The status "
-                            + "change cannot be undone and a terminal event cannot then be edited. Do the "
-                            + "recurrence change first, or drop it from this call.");
+                            + "change cannot be undone and a terminal event cannot then be edited. Note that "
+                            + "moving scheduledStartTime on a recurring event also changes its recurrence. "
+                            + "Do the recurrence change first, or drop it from this call.");
         }
 
         var manager = event.getManager();

@@ -222,6 +222,22 @@ class RecurrenceRuleTest {
     }
 
     @Test
+    void rejectsFieldsOutsideTheWritableSchema() {
+        // A near-miss on a daily rule is the dangerous case: daily needs no selector, so nothing
+        // else would have caught it, and Discord would ignore the key and build a different
+        // schedule than the one asked for.
+        assertThatThrownBy(() -> RecurrenceRule.parse(
+                "{\"frequency\": 3, \"by_weekdays\": [0,1,2,3,4]}", START))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("by_weekdays");
+
+        assertThatThrownBy(() -> RecurrenceRule.parse(
+                "{\"frequency\": 2, \"by_weekday\": [2], \"nonsense\": true}", START))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("unrecognised field");
+    }
+
+    @Test
     void rejectsExplicitlyEmptySelectorArrays() {
         // hasArray() treats an empty array as absent, but the empty key still ships in the payload
         // and Discord rejects it, so it has to fail here rather than after the event is created.
