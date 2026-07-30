@@ -318,21 +318,12 @@ jobs:
           fi
 
       - name: Claude review
+        id: claude_review
         # Pinned from anthropics/claude-code-action v1.0.167. Update deliberately.
         uses: anthropics/claude-code-action@0fe28cdb64e23015219b0e478100b7105fd7dfa1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ github.token }}
-          # Without this the action never creates the tracking comment, so
-          # mcp__github_comment__update_claude_comment has nothing to update and
-          # the review is produced and then discarded. Observed on the first live
-          # run: 12 turns, no errors, no permission denials, and no output.
-          use_sticky_comment: "true"
-          # This is the one that actually creates the tracking comment. Its own
-          # description: "Force tag mode with tracking comments for pull_request
-          # and issue events." use_sticky_comment only consolidates comments once
-          # they exist; without track_progress there is nothing to consolidate.
-          track_progress: "true"
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
@@ -396,8 +387,10 @@ jobs:
             This workflow runs again on new commits. Do not repeat findings that
             earlier comments already resolved unless the issue is still present.
 
-            Post a single sticky review comment using the marker above, updating
-            it on later runs rather than adding a new comment each time.
+            Do not call any comment or GitHub tool, and do not try to post
+            anything yourself. Return the review as your final message, in
+            Markdown. A later step publishes it. Anything you do not return is
+            lost, so put the whole review in that final message.
           # The reviewer reads attacker-influenceable content while holding
           # CLAUDE_CODE_OAUTH_TOKEN, so a manipulated model must have nothing to
           # exfiltrate with and nowhere to send it. No shell, no network, no
@@ -420,7 +413,9 @@ jobs:
                   "Read(//home/runner/.config/**)",
                   "Read(//home/runner/.git-credentials)",
                   "Read(//home/runner/.npmrc)",
-                  "Read(./.git/**)"
+                  "Read(./.git/**)",
+                  "mcp__github_comment__update_claude_comment",
+                  "mcp__github_inline_comment__create_inline_comment"
                 ]
               }
             }
@@ -435,5 +430,58 @@ jobs:
             --safe-mode
             --model claude-opus-5
             --max-turns 100
-            --allowedTools "Read,ToolSearch,mcp__github_comment__update_claude_comment"
+            --allowedTools "Read"
             --add-dir "${{ runner.temp }}/pr"
+
+      # The model does not publish its own review. Four attempts at making it call
+      # mcp__github_comment__update_claude_comment produced a full review every time and
+      # posted none of them, with zero permission denials — the tool was registered and
+      # allowed and simply never called. So the review is taken out of the action's own
+      # execution log and posted here, which depends on nothing undocumented.
+      - name: Extract the review
+        id: extract
+        env:
+          EXECUTION_FILE: ${{ steps.claude_review.outputs.execution_file }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${EXECUTION_FILE:-}" ] || [ ! -f "${EXECUTION_FILE}" ]; then
+            echo "::error::Claude produced no execution file."
+            exit 1
+          fi
+          python3 - "${EXECUTION_FILE}" "${RUNNER_TEMP}/review.md" <<'PY'
+          import json, sys
+          messages = json.load(open(sys.argv[1], encoding="utf-8"))
+          # The final "result" entry carries the assistant's last message, which is the review.
+          body = ""
+          for m in messages:
+              if isinstance(m, dict) and m.get("type") == "result" and isinstance(m.get("result"), str):
+                  body = m["result"]
+          if not body.strip():
+              print("::error::Claude returned no review text.")
+              sys.exit(1)
+          open(sys.argv[2], "w", encoding="utf-8").write(body)
+          PY
+          echo "bytes=$(wc -c < "${RUNNER_TEMP}/review.md")" >> "$GITHUB_OUTPUT"
+
+      - name: Publish the review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          MARKER: '<!-- claude-pr-review -->'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "${MARKER}" > "${RUNNER_TEMP}/comment.md"
+          cat "${RUNNER_TEMP}/review.md" >> "${RUNNER_TEMP}/comment.md"
+
+          # Sticky: update the marked comment rather than stacking a new one per run.
+          existing=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --paginate --jq "[.[] | select(.body | contains(\"${MARKER}\")) | .id] | first // empty")
+          if [ -n "${existing}" ]; then
+            gh api --method PATCH "repos/${REPO}/issues/comments/${existing}" -F body=@"${RUNNER_TEMP}/comment.md" --silent
+            echo "Updated review comment ${existing}"
+          else
+            gh api --method POST "repos/${REPO}/issues/${PR_NUMBER}/comments" -F body=@"${RUNNER_TEMP}/comment.md" --silent
+            echo "Posted a new review comment"
+          fi
