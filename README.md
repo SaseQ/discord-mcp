@@ -440,9 +440,10 @@ mvn -Dtest=DiscordLiveIntegrationTest test
 
 > **Recurring events.** JDA has no representation for Discord's `recurrence_rule`, so these tools
 > send that one field through a custom JDA route — same bot token, same rate limiter. Pass
-> `recurrenceRule` as JSON, e.g. `{"frequency": 2, "interval": 1, "by_weekday": [2]}` for weekly on
-> Wednesday. Discord accepts a narrow set of rules and rejects the rest with an opaque 400, so the
-> rule is validated locally first. Editing a recurring event's start time moves its recurrence
+> `recurrenceRule` as JSON. Usually `{"frequency": 2}` is enough: the start time is the series'
+> first occurrence, so for weekly, monthly and yearly the selector is derived from it when omitted
+> and must agree with it when supplied. Discord accepts a narrow set of rules and rejects the rest
+> with an opaque 400, so rules are validated locally first, before anything is created. Editing a recurring event's start time moves its recurrence
 > anchor too; without that the series snaps back to its old time.
 - [`get_guild_scheduled_event_users`](): Get list of users interested in a scheduled event
 

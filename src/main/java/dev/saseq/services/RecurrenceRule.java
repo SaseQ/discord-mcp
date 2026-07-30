@@ -220,23 +220,6 @@ public final class RecurrenceRule {
             }
         }
 
-        // Discord derives the series from a selector, and the one it wants depends on the
-        // frequency. Without this a rule like {"frequency": 2} passes every check above, the base
-        // event is created, and only the recurrence PATCH fails.
-        if (frequency == WEEKLY && !hasWeekday) {
-            throw new IllegalArgumentException(
-                    "A weekly recurrence_rule needs by_weekday, e.g. \"by_weekday\": [2] for Wednesday");
-        }
-        if (frequency == MONTHLY && !hasNWeekday) {
-            throw new IllegalArgumentException(
-                    "A monthly recurrence_rule needs by_n_weekday, e.g. \"by_n_weekday\": [{\"n\": 2, \"day\": 4}] "
-                            + "for the second Friday of each month");
-        }
-        if (frequency == YEARLY && !(hasMonth && hasMonthDay)) {
-            throw new IllegalArgumentException(
-                    "A yearly recurrence_rule needs by_month and by_month_day, "
-                            + "e.g. \"by_month\": [4], \"by_month_day\": [8] for 8 April");
-        }
 
         if (!rule.hasKey("start") || rule.getString("start", "").isEmpty()) {
             if (start == null || start.isEmpty()) {
@@ -249,12 +232,41 @@ public final class RecurrenceRule {
         // separately, so a rule carrying a malformed start of its own would otherwise create the
         // event and fail only on the recurrence PATCH.
         String anchor = rule.getString("start");
+        OffsetDateTime moment;
         try {
-            OffsetDateTime.parse(anchor);
+            moment = OffsetDateTime.parse(anchor);
         } catch (DateTimeParseException e) {
             throw new IllegalArgumentException(
                     "recurrence_rule.start must be an ISO8601 timestamp, e.g. 2026-08-05T20:00:00-05:00, got: "
                             + anchor);
+        }
+
+        // The anchor is the series' first occurrence, so for weekly, monthly and yearly the
+        // selector is fully determined by it: a Wednesday anchor with a Thursday by_weekday is not
+        // a Thursday series, it is an incoherent rule. Supply it and it is checked; omit it and it
+        // is filled in, because there is exactly one correct value and making the caller repeat it
+        // only creates a way to get it wrong. Daily is exempt — its weekday set is a real choice.
+        //
+        // Derived through the same helper withStart uses, so the two can never disagree about what
+        // a given anchor implies.
+        DataObject expected = DataObject.empty();
+        applySelectors(expected, frequency, moment);
+        for (String selector : List.of("by_weekday", "by_n_weekday", "by_month", "by_month_day")) {
+            if (!expected.hasKey(selector)) {
+                continue;
+            }
+            String want = expected.getArray(selector).toString();
+            if (!hasArray(rule, selector)) {
+                rule.put(selector, expected.getArray(selector));
+                continue;
+            }
+            String got = rule.getArray(selector).toString();
+            if (!want.equals(got)) {
+                throw new IllegalArgumentException(
+                        "recurrence_rule." + selector + " is " + got + " but start (" + anchor
+                                + ") falls on " + want + ". The anchor is the first occurrence, so they must "
+                                + "agree. Move start to the date you want, and the selector follows.");
+            }
         }
         return rule;
     }
@@ -294,25 +306,35 @@ public final class RecurrenceRule {
             throw new IllegalArgumentException(
                     "recurrence_rule.start must be an ISO8601 timestamp, got: " + start);
         }
-        int weekday = moment.getDayOfWeek().getValue() - 1;   // java Monday=1, Discord Monday=0
-        switch (writable.getInt("frequency", -1)) {
-            case WEEKLY -> writable.put("by_weekday", DataArray.empty().add(weekday));
-            case YEARLY -> writable
-                    .put("by_month", DataArray.empty().add(moment.getMonthValue()))
-                    .put("by_month_day", DataArray.empty().add(moment.getDayOfMonth()));
-            case MONTHLY -> writable.put("by_n_weekday", DataArray.empty().add(
-                    DataObject.empty()
-                            // Which occurrence of that weekday the new date falls on.
-                            .put("n", ((moment.getDayOfMonth() - 1) / 7) + 1)
-                            .put("day", weekday)));
-            default -> {
-                // Daily selects a set of weekdays, which a date change does not redefine.
-            }
-        }
+        applySelectors(writable, writable.getInt("frequency", -1), moment);
 
         // Round-trip through the same validation the caller's input gets, so we can never send
         // ourselves something we would have rejected from anyone else.
         return parse(writable.toString(), start);
+    }
+
+    /**
+     * Set the selectors a frequency requires from the moment the series is anchored at.
+     *
+     * <p>Shared so that rebuilding a rule and validating a caller's rule cannot disagree about
+     * which weekday, month day, or nth-weekday a given anchor implies.
+     */
+    private static void applySelectors(DataObject target, int frequency, OffsetDateTime moment) {
+        int weekday = moment.getDayOfWeek().getValue() - 1;   // java Monday=1, Discord Monday=0
+        switch (frequency) {
+            case WEEKLY -> target.put("by_weekday", DataArray.empty().add(weekday));
+            case YEARLY -> target
+                    .put("by_month", DataArray.empty().add(moment.getMonthValue()))
+                    .put("by_month_day", DataArray.empty().add(moment.getDayOfMonth()));
+            case MONTHLY -> target.put("by_n_weekday", DataArray.empty().add(
+                    DataObject.empty()
+                            // Which occurrence of that weekday the date falls on.
+                            .put("n", ((moment.getDayOfMonth() - 1) / 7) + 1)
+                            .put("day", weekday)));
+            default -> {
+                // Daily selects a set of weekdays, which the anchor date does not determine.
+            }
+        }
     }
 
     /** One-line human summary, so a recurring event is visibly recurring in tool output. */

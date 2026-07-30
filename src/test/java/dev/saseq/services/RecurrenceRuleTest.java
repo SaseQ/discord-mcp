@@ -134,29 +134,38 @@ class RecurrenceRuleTest {
                 .hasMessageContaining("both n and day");
 
         assertThat(RecurrenceRule.parse(
-                "{\"frequency\": 1, \"by_n_weekday\": [{\"n\": 2, \"day\": 4}]}", START)
-                .getArray("by_n_weekday").getObject(0).getInt("n")).isEqualTo(2);
+                "{\"frequency\": 1, \"by_n_weekday\": [{\"n\": 1, \"day\": 2}]}", START)
+                .getArray("by_n_weekday").getObject(0).getInt("n")).isEqualTo(1);
     }
 
     @Test
-    void requiresTheSelectorEachFrequencyDependsOn() {
-        // Discord derives the series from a selector. Omitting it passes every other check, so the
-        // base event gets created and only the recurrence PATCH fails.
-        assertThatThrownBy(() -> RecurrenceRule.parse("{\"frequency\": 2}", START))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("weekly recurrence_rule needs by_weekday");
+    void fillsInTheSelectorEachFrequencyImpliesFromTheAnchor() {
+        // START is Wednesday 2026-08-05, the first Wednesday of August. For weekly, monthly and
+        // yearly the selector is fully determined by that, so omitting it is filled in rather than
+        // rejected -- there is exactly one correct value.
+        assertThat(RecurrenceRule.parse("{\"frequency\": 2}", START)
+                .getArray("by_weekday").getInt(0)).isEqualTo(2);
 
-        assertThatThrownBy(() -> RecurrenceRule.parse("{\"frequency\": 1}", START))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("needs by_n_weekday");
+        DataObject nth = RecurrenceRule.parse("{\"frequency\": 1}", START)
+                .getArray("by_n_weekday").getObject(0);
+        assertThat(nth.getInt("n")).isEqualTo(1);
+        assertThat(nth.getInt("day")).isEqualTo(2);
 
-        assertThatThrownBy(() -> RecurrenceRule.parse("{\"frequency\": 0}", START))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("needs by_month and by_month_day");
+        DataObject yearly = RecurrenceRule.parse("{\"frequency\": 0}", START);
+        assertThat(yearly.getArray("by_month").getInt(0)).isEqualTo(8);
+        assertThat(yearly.getArray("by_month_day").getInt(0)).isEqualTo(5);
 
-        // Daily needs no selector: no by_weekday means every day.
-        assertThat(RecurrenceRule.parse("{\"frequency\": 3}", START).getInt("frequency"))
-                .isEqualTo(RecurrenceRule.DAILY);
+        // Daily is exempt: its weekday set is a genuine choice, not implied by the date.
+        assertThat(RecurrenceRule.parse("{\"frequency\": 3}", START).hasKey("by_weekday")).isFalse();
+    }
+
+    @Test
+    void rejectsASelectorThatContradictsTheAnchor() {
+        // A Wednesday anchor with a Thursday by_weekday is not a Thursday series, it is an
+        // incoherent rule that Discord rejects or silently reinterprets.
+        assertThatThrownBy(() -> RecurrenceRule.parse("{\"frequency\": 2, \"by_weekday\": [3]}", START))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("falls on");
     }
 
     @Test
@@ -172,8 +181,8 @@ class RecurrenceRuleTest {
                 .hasMessageContaining("1 through 31");
 
         assertThat(RecurrenceRule.parse(
-                "{\"frequency\": 0, \"by_month\": [4], \"by_month_day\": [8]}", START)
-                .getArray("by_month").getInt(0)).isEqualTo(4);
+                "{\"frequency\": 0, \"by_month\": [8], \"by_month_day\": [5]}", START)
+                .getArray("by_month").getInt(0)).isEqualTo(8);
     }
 
     @Test
@@ -287,11 +296,11 @@ class RecurrenceRuleTest {
                 .contains("weekly").contains("Wednesday").contains(START);
 
         assertThat(RecurrenceRule.describe(
-                RecurrenceRule.parse("{\"frequency\": 2, \"interval\": 2, \"by_weekday\": [0]}", START)))
-                .contains("every 2 weeks").contains("Monday");
+                RecurrenceRule.parse("{\"frequency\": 2, \"interval\": 2, \"by_weekday\": [2]}", START)))
+                .contains("every 2 weeks").contains("Wednesday");
 
         assertThat(RecurrenceRule.describe(
-                RecurrenceRule.parse("{\"frequency\": 1, \"by_n_weekday\": [{\"n\":2,\"day\":4}]}", START)))
-                .contains("occurrence 2").contains("Friday");
+                RecurrenceRule.parse("{\"frequency\": 1, \"by_n_weekday\": [{\"n\":1,\"day\":2}]}", START)))
+                .contains("occurrence 1").contains("Wednesday");
     }
 }

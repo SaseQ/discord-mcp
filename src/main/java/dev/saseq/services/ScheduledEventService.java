@@ -28,6 +28,9 @@ public class ScheduledEventService {
             "Recurrence rule as JSON, e.g. {\"frequency\": 2, \"interval\": 1, \"by_weekday\": [2]} "
                     + "for weekly on Wednesday. frequency: 0=yearly, 1=monthly, 2=weekly, 3=daily. "
                     + "by_weekday: 0=Monday..6=Sunday, and a weekly rule accepts exactly one day. "
+                    + "For weekly, monthly and yearly the selector is derived from the start time when "
+                    + "omitted, and must agree with it when supplied, since the start is the first "
+                    + "occurrence. Usually you only need frequency. "
                     + "interval may exceed 1 only for weekly (every-other-week). "
                     + "by_n_weekday is monthly only; by_month with by_month_day is yearly only. "
                     + "count, end and by_year_day are set by Discord and must be omitted. "
@@ -239,8 +242,23 @@ public class ScheduledEventService {
 
         if (rule != null) {
             // JDA's create action has no recurrence setter, so the field is applied as a follow-up
-            // PATCH on the event it just made.
-            patchRaw(guild.getId(), event.getId(), DataObject.empty().put("recurrence_rule", rule));
+            // PATCH on the event it just made. That leaves a window: local validation cannot
+            // predict a transient REST failure or a guild-level rejection, and without cleanup the
+            // caller is left with a one-off event they did not ask for, plus a thrown error that
+            // invites a retry and a duplicate.
+            try {
+                patchRaw(guild.getId(), event.getId(), DataObject.empty().put("recurrence_rule", rule));
+            } catch (RuntimeException e) {
+                try {
+                    event.delete().complete();
+                } catch (RuntimeException cleanupFailure) {
+                    throw new IllegalArgumentException(
+                            "Failed to apply the recurrence rule (" + e.getMessage() + ") and could not remove "
+                                    + "the event created for it (ID: " + event.getId() + "). Delete it manually.");
+                }
+                throw new IllegalArgumentException(
+                        "Failed to apply the recurrence rule, so the event was not created: " + e.getMessage());
+            }
             formatted += "\n  • Recurrence: " + RecurrenceRule.describe(rule);
         }
         return "Created scheduled event:\n" + formatted;
@@ -274,16 +292,18 @@ public class ScheduledEventService {
         if (recurrenceRule != null && !recurrenceRule.isEmpty() && !clearingRecurrence) {
             String anchor = movingStart ? scheduledStartTime : raw.getString("scheduled_start_time", null);
             newRule = RecurrenceRule.parse(recurrenceRule, anchor);
-            // A rule may carry its own start, which parse() keeps. Combined with a start-time move
-            // that produces an event whose scheduled_start_time and recurrence anchor disagree,
-            // and the series follows the anchor — the snap-back this tool promises to prevent.
-            // The two are ambiguous together, so say so rather than silently picking one.
-            if (movingStart && !newRule.getString("start", "").equals(scheduledStartTime)) {
+            // A rule may carry its own start, which parse() keeps. If that disagrees with the
+            // event's start time the series follows the anchor and the event time is ignored —
+            // the snap-back this tool promises to prevent. Checked against the effective start
+            // whether or not this call is moving it: a recurrence-only edit can drag the anchor
+            // away from an unchanged scheduled_start_time just as easily.
+            if (!newRule.getString("start", "").equals(anchor)) {
                 throw new IllegalArgumentException(
-                        "scheduledStartTime is " + scheduledStartTime + " but the recurrence rule anchors at "
+                        "The event starts at " + anchor + " but the recurrence rule anchors at "
                                 + newRule.getString("start", "") + ". They must match, or the series would "
-                                + "follow the anchor and ignore the new start time. Omit start from the rule "
-                                + "to have it default to the new start time.");
+                                + "follow the anchor and ignore the event's start time. Omit start from the "
+                                + "rule to have it default to the event's start time"
+                                + (movingStart ? ", or set scheduledStartTime to match." : "."));
             }
         }
         if (clearingRecurrence && existingRecurrence == null) {
