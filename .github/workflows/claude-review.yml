@@ -419,17 +419,17 @@ jobs:
                 ]
               }
             }
-          # No --tools here, deliberately. That flag sets which tools EXIST ("the list of
-          # available tools from the built-in set"), and --allowedTools only filters what already
-          # exists. Setting --tools "Read" while permitting the MCP comment tool meant permitting
-          # something that was never registered: the reviewer analysed the PR properly and then had
-          # no way to say so, with zero permission denials because nothing was ever denied.
-          # Restriction now comes from --allowedTools plus the deny block above, which also beats
-          # tag mode's broader injected defaults.
+          # --tools is the availability list: it decides which built-in tools EXIST, where
+          # --allowedTools only grants permission among those that already do. Dropping it while
+          # chasing the publishing bug restored every default built-in — Glob, Grep, Task and the
+          # rest — none of which the deny block names, so the Read-only isolation this job claims
+          # was not actually in force. The model no longer needs to publish anything, so there is
+          # no reason for it to have more than Read.
           claude_args: |
             --safe-mode
             --model claude-opus-5
             --max-turns 100
+            --tools "Read"
             --allowedTools "Read"
             --add-dir "${{ runner.temp }}/pr"
 
@@ -470,14 +470,31 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
           MARKER: '<!-- claude-pr-review -->'
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         shell: bash
         run: |
           set -euo pipefail
           echo "${MARKER}" > "${RUNNER_TEMP}/comment.md"
-          cat "${RUNNER_TEMP}/review.md" >> "${RUNNER_TEMP}/comment.md"
+
+          # GitHub rejects an issue comment body over 65536 characters, and nothing bounds the
+          # model's response, so a long review would fail both the POST and the PATCH and be lost
+          # entirely. Truncated with a pointer to the job log, which still has the full text.
+          max_body=64000
+          if [ "$(wc -c < "${RUNNER_TEMP}/review.md")" -gt "${max_body}" ]; then
+            head -c "${max_body}" "${RUNNER_TEMP}/review.md" >> "${RUNNER_TEMP}/comment.md"
+            {
+              echo
+              echo "---"
+              echo "*Review truncated to fit GitHub's comment limit. Full text is in the [job log](${RUN_URL}).*"
+            } >> "${RUNNER_TEMP}/comment.md"
+          else
+            cat "${RUNNER_TEMP}/review.md" >> "${RUNNER_TEMP}/comment.md"
+          fi
 
           # Sticky: update the marked comment rather than stacking a new one per run.
-          existing=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --paginate --jq "[.[] | select(.body | contains(\"${MARKER}\")) | .id] | first // empty")
+          # Filtered by author as well as marker — the marker is visible in every published review,
+          # so anyone could post a comment carrying it and have this PATCH overwrite their text.
+          existing=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --paginate --jq "[.[] | select(.user.login == \"github-actions[bot]\") | select(.body | contains(\"${MARKER}\")) | .id] | first // empty")
           if [ -n "${existing}" ]; then
             gh api --method PATCH "repos/${REPO}/issues/comments/${existing}" -F body=@"${RUNNER_TEMP}/comment.md" --silent
             echo "Updated review comment ${existing}"
