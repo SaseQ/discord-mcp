@@ -433,10 +433,17 @@ mvn -Dtest=DiscordLiveIntegrationTest test
 - [`modify_voice_state`](): Server mute or deafen a member in voice channels
 
 #### Scheduled Events Management
-- [`create_guild_scheduled_event`](): Schedule a new event on the server (voice, stage, or external)
-- [`edit_guild_scheduled_event`](): Modify event details or change its status (start, complete, cancel)
+- [`create_guild_scheduled_event`](): Schedule a new event on the server (voice, stage, or external), optionally recurring
+- [`edit_guild_scheduled_event`](): Modify event details or change its status (start, complete, cancel), including the recurrence rule
 - [`delete_guild_scheduled_event`](): Permanently delete a scheduled event
-- [`list_guild_scheduled_events`](): List all active and scheduled events on the server
+- [`list_guild_scheduled_events`](): List all active and scheduled events on the server, showing which ones recur
+
+> **Recurring events.** JDA has no representation for Discord's `recurrence_rule`, so these tools
+> send that one field through a custom JDA route — same bot token, same rate limiter. Pass
+> `recurrenceRule` as JSON, e.g. `{"frequency": 2, "interval": 1, "by_weekday": [2]}` for weekly on
+> Wednesday. Discord accepts a narrow set of rules and rejects the rest with an opaque 400, so the
+> rule is validated locally first. Editing a recurring event's start time moves its recurrence
+> anchor too; without that the series snaps back to its old time.
 - [`get_guild_scheduled_event_users`](): Get list of users interested in a scheduled event
 
 #### Channel Permission Overwrites

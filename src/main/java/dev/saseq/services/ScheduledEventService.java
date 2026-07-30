@@ -5,6 +5,10 @@ import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.entities.ScheduledEvent;
 import net.dv8tion.jda.api.entities.channel.middleman.GuildChannel;
+import net.dv8tion.jda.api.requests.Method;
+import net.dv8tion.jda.api.requests.Route;
+import net.dv8tion.jda.api.utils.data.DataObject;
+import net.dv8tion.jda.internal.requests.RestActionImpl;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.beans.factory.annotation.Value;
@@ -19,6 +23,15 @@ import java.util.stream.Collectors;
 public class ScheduledEventService {
 
     private final JDA jda;
+
+    static final String RECURRENCE_PARAM =
+            "Recurrence rule as JSON, e.g. {\"frequency\": 2, \"interval\": 1, \"by_weekday\": [2]} "
+                    + "for weekly on Wednesday. frequency: 0=yearly, 1=monthly, 2=weekly, 3=daily. "
+                    + "by_weekday: 0=Monday..6=Sunday, and a weekly rule accepts exactly one day. "
+                    + "interval may exceed 1 only for weekly (every-other-week). "
+                    + "by_n_weekday is monthly only; by_month with by_month_day is yearly only. "
+                    + "count, end and by_year_day are set by Discord and must be omitted. "
+                    + "Defaults its start to the event's start time.";
 
     @Value("${DISCORD_GUILD_ID:}")
     private String defaultGuildId;
@@ -65,6 +78,33 @@ public class ScheduledEventService {
         }
     }
 
+    /**
+     * Read a scheduled event as raw JSON.
+     *
+     * <p>JDA has no representation for {@code recurrence_rule}, so a recurring event is
+     * indistinguishable from a one-off through the normal entity. Routed through JDA's own request
+     * stack rather than a separate HTTP client, so it shares the bot token, the rate limiter, and
+     * the retry behaviour instead of quietly becoming an unmetered second path to Discord.
+     */
+    private DataObject fetchRaw(String guildId, String eventId) {
+        Route.CompiledRoute route = Route.custom(Method.GET, "guilds/{guild_id}/scheduled-events/{event_id}")
+                .compile(guildId, eventId);
+        return new RestActionImpl<DataObject>(jda, route,
+                (response, request) -> response.getObject()).complete();
+    }
+
+    private DataObject patchRaw(String guildId, String eventId, DataObject body) {
+        Route.CompiledRoute route = Route.custom(Method.PATCH, "guilds/{guild_id}/scheduled-events/{event_id}")
+                .compile(guildId, eventId);
+        return new RestActionImpl<DataObject>(jda, route, body,
+                (response, request) -> response.getObject()).complete();
+    }
+
+    /** The event's recurrence rule, or null if it is not a recurring event. */
+    private DataObject recurrenceOf(DataObject raw) {
+        return raw.isNull("recurrence_rule") ? null : raw.getObject("recurrence_rule");
+    }
+
     private String formatEvent(ScheduledEvent event) {
         StringBuilder sb = new StringBuilder();
         sb.append("**").append(event.getName()).append("** (ID: ").append(event.getId()).append(")\n");
@@ -95,7 +135,8 @@ public class ScheduledEventService {
             @ToolParam(description = "ISO8601 timestamp for when the event ends (Required for External events)", required = false) String scheduledEndTime,
             @ToolParam(description = "Type of event: 1=Stage Instance, 2=Voice, 3=External") String entityType,
             @ToolParam(description = "Channel ID (Required for types 1 and 2)", required = false) String channelId,
-            @ToolParam(description = "Location or link (Required for type 3 - External)", required = false) String location) {
+            @ToolParam(description = "Location or link (Required for type 3 - External)", required = false) String location,
+            @ToolParam(description = RECURRENCE_PARAM, required = false) String recurrenceRule) {
 
         Guild guild = getGuild(guildId);
         if (name == null || name.isEmpty()) throw new IllegalArgumentException("name cannot be null");
@@ -127,8 +168,22 @@ public class ScheduledEventService {
             action.setEndTime(parseTime(scheduledEndTime));
         }
 
+        // Validate the rule BEFORE creating anything. Otherwise a bad rule leaves a stray
+        // non-recurring event behind that the caller then has to notice and clean up.
+        DataObject rule = (recurrenceRule != null && !recurrenceRule.isEmpty())
+                ? RecurrenceRule.parse(recurrenceRule, scheduledStartTime)
+                : null;
+
         ScheduledEvent event = action.complete();
-        return "Created scheduled event:\n" + formatEvent(event);
+        String formatted = formatEvent(event);
+
+        if (rule != null) {
+            // JDA's create action has no recurrence setter, so the field is applied as a follow-up
+            // PATCH on the event it just made.
+            patchRaw(guild.getId(), event.getId(), DataObject.empty().put("recurrence_rule", rule));
+            formatted += "\n  • Recurrence: " + RecurrenceRule.describe(rule);
+        }
+        return "Created scheduled event:\n" + formatted;
     }
 
     @Tool(name = "edit_guild_scheduled_event", description = "Modify details of an existing event or change its status (start, complete, cancel)")
@@ -138,16 +193,23 @@ public class ScheduledEventService {
             @ToolParam(description = "New status: 1=Scheduled, 2=Active (start), 3=Completed, 4=Canceled", required = false) String status,
             @ToolParam(description = "New name", required = false) String name,
             @ToolParam(description = "New description", required = false) String description,
-            @ToolParam(description = "New ISO8601 start time", required = false) String scheduledStartTime,
-            @ToolParam(description = "New location (for External events)", required = false) String location) {
+            @ToolParam(description = "New ISO8601 start time. If the event recurs, its recurrence anchor is moved to match, so the series actually changes rather than snapping back.", required = false) String scheduledStartTime,
+            @ToolParam(description = "New location (for External events)", required = false) String location,
+            @ToolParam(description = RECURRENCE_PARAM, required = false) String recurrenceRule) {
 
         Guild guild = getGuild(guildId);
         ScheduledEvent event = getEvent(guild, eventId);
 
+        // Read the live event before touching it: JDA cannot tell us whether this is a recurring
+        // series, and that changes what a start-time edit means.
+        DataObject raw = fetchRaw(guild.getId(), event.getId());
+        DataObject existingRecurrence = recurrenceOf(raw);
+        boolean movingStart = scheduledStartTime != null && !scheduledStartTime.isEmpty();
+
         var manager = event.getManager();
         if (name != null && !name.isEmpty()) manager.setName(name);
         if (description != null && !description.isEmpty()) manager.setDescription(description);
-        if (scheduledStartTime != null && !scheduledStartTime.isEmpty()) manager.setStartTime(parseTime(scheduledStartTime));
+        if (movingStart) manager.setStartTime(parseTime(scheduledStartTime));
         if (location != null && !location.isEmpty()) manager.setLocation(location);
         if (status != null && !status.isEmpty()) {
             manager.setStatus(switch (Integer.parseInt(status)) {
@@ -160,7 +222,31 @@ public class ScheduledEventService {
         }
 
         manager.complete();
-        return "Successfully updated scheduled event: " + event.getName() + " (ID: " + event.getId() + ")";
+        StringBuilder result = new StringBuilder("Successfully updated scheduled event: ")
+                .append(event.getName()).append(" (ID: ").append(event.getId()).append(")");
+
+        if (recurrenceRule != null && !recurrenceRule.isEmpty()) {
+            String anchor = movingStart ? scheduledStartTime : raw.getString("scheduled_start_time", null);
+            DataObject rule = RecurrenceRule.parse(recurrenceRule, anchor);
+            patchRaw(guild.getId(), event.getId(), DataObject.empty().put("recurrence_rule", rule));
+            result.append("\n  • Recurrence set: ").append(RecurrenceRule.describe(rule));
+        } else if (existingRecurrence != null && movingStart) {
+            // The bug this tool used to have. A recurring event's series is anchored by
+            // recurrence_rule.start, not by scheduled_start_time. Moving only the latter shifts the
+            // next occurrence and then the series snaps back to its old time, while the tool
+            // reported plain success. Move the anchor with it and say so.
+            DataObject moved = existingRecurrence.put("start", scheduledStartTime);
+            patchRaw(guild.getId(), event.getId(), DataObject.empty().put("recurrence_rule", moved));
+            result.append("\n  • This is a recurring event, so its recurrence anchor was moved to ")
+                    .append(scheduledStartTime)
+                    .append(" as well. Without that the series would have snapped back to the old time.")
+                    .append("\n  • Recurrence is now: ").append(RecurrenceRule.describe(moved));
+        } else if (existingRecurrence != null) {
+            result.append("\n  • Note: this is a recurring event (")
+                    .append(RecurrenceRule.describe(existingRecurrence))
+                    .append("). The recurrence rule was not changed.");
+        }
+        return result.toString();
     }
 
     @Tool(name = "delete_guild_scheduled_event", description = "Permanently delete a scheduled event")
@@ -189,6 +275,27 @@ public class ScheduledEventService {
 
         boolean includeUserCount = withUserCount == null || withUserCount.isEmpty() || Boolean.parseBoolean(withUserCount);
 
+        // One raw list call so recurrence is visible here. Without it a weekly class and a one-off
+        // look identical, which is how a recurring event gets edited as though it were not one.
+        java.util.Map<String, DataObject> rules = new java.util.HashMap<>();
+        try {
+            Route.CompiledRoute route = Route.custom(Method.GET, "guilds/{guild_id}/scheduled-events")
+                    .compile(guild.getId());
+            var raw = new RestActionImpl<net.dv8tion.jda.api.utils.data.DataArray>(jda, route,
+                    (response, request) -> response.getArray()).complete();
+            for (int i = 0; i < raw.length(); i++) {
+                DataObject o = raw.getObject(i);
+                DataObject rule = recurrenceOf(o);
+                if (rule != null) {
+                    rules.put(o.getString("id"), rule);
+                }
+            }
+        } catch (RuntimeException e) {
+            // Recurrence detail is an enhancement to this listing, not its purpose. Losing it
+            // should not turn a working list call into a failure.
+            rules.clear();
+        }
+
         return "Retrieved " + events.size() + " scheduled events:\n" +
                 events.stream()
                         .map(e -> {
@@ -197,6 +304,8 @@ public class ScheduledEventService {
                             sb.append("  • Type: ").append(e.getType()).append(" | Status: ").append(e.getStatus()).append("\n");
                             sb.append("  • Start: ").append(e.getStartTime());
                             if (e.getEndTime() != null) sb.append(" | End: ").append(e.getEndTime());
+                            DataObject rule = rules.get(e.getId());
+                            if (rule != null) sb.append("\n  • Recurs: ").append(RecurrenceRule.describe(rule));
                             if (includeUserCount) sb.append("\n  • Interested: ").append(e.getInterestedUserCount()).append(" users");
                             return sb.toString();
                         })
