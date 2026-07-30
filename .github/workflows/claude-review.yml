@@ -69,13 +69,26 @@ jobs:
           # The full post-change tree as plain files. The reviewer has no shell,
           # so `git show` is not available to it; this is how it reads a changed
           # file in full instead of guessing from a hunk.
+          #
+          # Everything below strips things that would let this tree act instead of
+          # just being read. All of it stays visible in pr-diff.patch, so nothing
+          # becomes unreviewable — it only stops being loadable or dereferenceable.
           git archive "${HEAD_SHA}" | tar -x -C "${ctx}/head"
 
-          # Claude Code reads CLAUDE.md and .claude/ out of added directories, so
-          # leaving head copies here would hand an injected branch the agent
-          # instructions we just moved off the working tree. Changes to these
-          # paths are still fully visible in pr-diff.patch.
-          rm -rf "${ctx}/head/.claude" "${ctx}/head/CLAUDE.md" "${ctx}/head/AGENTS.md"
+          # Symlinks first. git archive preserves mode 120000, so a link named
+          # notes.txt can target /proc/self/environ. A path-pattern rule like
+          # Read(//proc/**) matches the path ASKED FOR, never the resolved one, and
+          # the memory loader is not a tool call so no rule applies to it at all.
+          # A pointer out of the tree is not reviewable content; delete them.
+          find "${ctx}/head" -type l -delete
+
+          # Then agent memory and settings, at EVERY depth, not just the root.
+          # Claude Code loads a descendant CLAUDE.md when it reads a file in that
+          # subtree, and the prompt below tells it to read files in this subtree.
+          find "${ctx}/head" \
+            \( -name 'CLAUDE.md' -o -name 'CLAUDE.local.md' -o -name 'AGENTS.md' \
+               -o -name '.claude' -o -name '.cursorrules' -o -name '.mcp.json' \) \
+            -prune -exec rm -rf {} +
 
       - name: Claude review
         # Pinned from anthropics/claude-code-action v1.0.167. Update deliberately.

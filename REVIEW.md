@@ -23,9 +23,18 @@ This has already gone wrong once. `createEmoji` was hardened, and then
 because the guard was a private method rather than shared code.
 
 **Local filesystem reads are exfiltration vectors.** Any tool that reads a
-caller-supplied path must confine it to an allowlisted root, normalised and
-prefix-checked. An unconstrained read, on a service that loads secrets from its
-environment, means one tool call can post credentials into a chat channel.
+caller-supplied path must confine it to an allowlisted root. An unconstrained
+read, on a service that loads secrets from its environment, means one tool call
+can post credentials into a chat channel.
+
+Confine on the **resolved** path, never the requested one. `normalize()` is
+lexical, and a glob rule matches the string it was handed, so a symlink satisfies
+either check while pointing anywhere on the host. Resolve both sides
+(`toRealPath()`) and read what you resolved. This has already bitten twice here,
+in unrelated code, on the same day: once in `send_file`'s allowlist, and once in
+the review workflow, where a materialized tree of PR files could carry a symlink
+to `/proc/self/environ` straight past a `Read(//proc/**)` deny rule. If a change
+compares paths as strings, that is the finding.
 
 **New write tools should be individually grantable.** Deployments filter tools by
 name, so a narrowly scoped tool can be allowed while a broad one stays denied.
