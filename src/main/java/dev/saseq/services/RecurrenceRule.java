@@ -100,6 +100,16 @@ public final class RecurrenceRule {
         }
         rule.put("interval", interval);
 
+        // An explicitly empty selector is not the same as an absent one. hasArray() treats both as
+        // "not set", but an empty array still ships in the payload and Discord rejects it, so it
+        // has to be caught here rather than skipped over.
+        for (String selector : List.of("by_weekday", "by_n_weekday", "by_month", "by_month_day")) {
+            if (rule.hasKey(selector) && !rule.isNull(selector) && rule.getArray(selector).isEmpty()) {
+                throw new IllegalArgumentException(
+                        "recurrence_rule." + selector + " is empty. Give it a value or omit the field entirely.");
+            }
+        }
+
         boolean hasWeekday = hasArray(rule, "by_weekday");
         boolean hasNWeekday = hasArray(rule, "by_n_weekday");
         boolean hasMonth = hasArray(rule, "by_month");
@@ -261,6 +271,34 @@ public final class RecurrenceRule {
             }
         }
         writable.put("start", start);
+
+        // Moving the anchor is not enough on its own. A weekly rule selecting Wednesday, moved to
+        // a Thursday, would keep by_weekday: [2] and contradict its own start — the series would
+        // stay on Wednesday, or Discord would reject the rule, while the tool claimed the move
+        // worked. That is the original bug in a different costume, so the selectors move too.
+        OffsetDateTime moment;
+        try {
+            moment = OffsetDateTime.parse(start);
+        } catch (DateTimeParseException e) {
+            throw new IllegalArgumentException(
+                    "recurrence_rule.start must be an ISO8601 timestamp, got: " + start);
+        }
+        int weekday = moment.getDayOfWeek().getValue() - 1;   // java Monday=1, Discord Monday=0
+        switch (writable.getInt("frequency", -1)) {
+            case WEEKLY -> writable.put("by_weekday", DataArray.empty().add(weekday));
+            case YEARLY -> writable
+                    .put("by_month", DataArray.empty().add(moment.getMonthValue()))
+                    .put("by_month_day", DataArray.empty().add(moment.getDayOfMonth()));
+            case MONTHLY -> writable.put("by_n_weekday", DataArray.empty().add(
+                    DataObject.empty()
+                            // Which occurrence of that weekday the new date falls on.
+                            .put("n", ((moment.getDayOfMonth() - 1) / 7) + 1)
+                            .put("day", weekday)));
+            default -> {
+                // Daily selects a set of weekdays, which a date change does not redefine.
+            }
+        }
+
         // Round-trip through the same validation the caller's input gets, so we can never send
         // ourselves something we would have rejected from anyone else.
         return parse(writable.toString(), start);

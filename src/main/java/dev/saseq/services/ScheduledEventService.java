@@ -113,6 +113,18 @@ public class ScheduledEventService {
      * <p>Needs its own spelling because an absent parameter already means "leave recurrence alone",
      * so there is no way to express {@code recurrence_rule: null} otherwise.
      */
+    /** Whether two rules pick the same point in the cycle, ignoring the anchor timestamp. */
+    private boolean sameSelectors(DataObject a, DataObject b) {
+        for (String selector : List.of("by_weekday", "by_n_weekday", "by_month", "by_month_day")) {
+            String left = a.hasKey(selector) && !a.isNull(selector) ? a.getArray(selector).toString() : "";
+            String right = b.hasKey(selector) && !b.isNull(selector) ? b.getArray(selector).toString() : "";
+            if (!left.equals(right)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private boolean isClearRequest(String recurrenceRule) {
         if (recurrenceRule == null) {
             return false;
@@ -236,6 +248,19 @@ public class ScheduledEventService {
                     "This event is not recurring, so there is no recurrence rule to clear.");
         }
 
+        // Completing or cancelling is irreversible and leaves an event that cannot then be
+        // modified. manager.complete() runs before the recurrence PATCH, so this combination would
+        // apply the terminal transition, fail the recurrence write, and report overall failure on
+        // a change that had already half happened and cannot be undone.
+        boolean terminalStatus = status != null && !status.isEmpty()
+                && (status.trim().equals("3") || status.trim().equals("4"));
+        if (terminalStatus && (newRule != null || clearingRecurrence)) {
+            throw new IllegalArgumentException(
+                    "Refusing to change recurrence while completing or cancelling this event. The status "
+                            + "change cannot be undone and a terminal event cannot then be edited. Do the "
+                            + "recurrence change first, or drop it from this call.");
+        }
+
         var manager = event.getManager();
         if (name != null && !name.isEmpty()) manager.setName(name);
         if (description != null && !description.isEmpty()) manager.setDescription(description);
@@ -274,8 +299,18 @@ public class ScheduledEventService {
             patchRaw(guild.getId(), event.getId(), DataObject.empty().put("recurrence_rule", moved));
             result.append("\n  • This is a recurring event, so its recurrence anchor was moved to ")
                     .append(scheduledStartTime)
-                    .append(" as well. Without that the series would have snapped back to the old time.")
-                    .append("\n  • Recurrence is now: ").append(RecurrenceRule.describe(moved));
+                    .append(" as well. Without that the series would have snapped back to the old time.");
+            String before = RecurrenceRule.describe(existingRecurrence);
+            String after = RecurrenceRule.describe(moved);
+            if (!sameSelectors(existingRecurrence, moved)) {
+                // Changing which day a weekly class lands on is a bigger deal than a time shift,
+                // and it happened as a side effect of the requested move. Say it loudly.
+                result.append("\n  • The new date falls on a different part of the cycle, so the series now runs on a ")
+                        .append("different schedule. Was: ").append(before).append(". Now: ").append(after)
+                        .append(". Pass an explicit recurrenceRule if that is not what you wanted.");
+            } else {
+                result.append("\n  • Recurrence is now: ").append(after);
+            }
         } else if (existingRecurrence != null) {
             result.append("\n  • Note: this is a recurring event (")
                     .append(RecurrenceRule.describe(existingRecurrence))

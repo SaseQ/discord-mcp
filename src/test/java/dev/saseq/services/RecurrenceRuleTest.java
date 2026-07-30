@@ -222,6 +222,49 @@ class RecurrenceRuleTest {
     }
 
     @Test
+    void rejectsExplicitlyEmptySelectorArrays() {
+        // hasArray() treats an empty array as absent, but the empty key still ships in the payload
+        // and Discord rejects it, so it has to fail here rather than after the event is created.
+        assertThatThrownBy(() -> RecurrenceRule.parse("{\"frequency\": 3, \"by_weekday\": []}", START))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("is empty");
+    }
+
+    @Test
+    void movingAcrossDatesMovesTheSelectorToo() {
+        // START is 2026-08-05, a Wednesday (weekday 2). Moving to the 6th, a Thursday, must carry
+        // by_weekday with it or the series contradicts its own anchor.
+        DataObject wednesday = DataObject.fromJson(
+                "{\"frequency\": 2, \"interval\": 1, \"by_weekday\": [2], \"start\": \"" + START + "\"}");
+
+        DataObject moved = RecurrenceRule.withStart(wednesday, "2026-08-06T20:00:00-05:00");
+        assertThat(moved.getArray("by_weekday").getInt(0)).isEqualTo(3);   // Thursday
+
+        // Same weekday, different time: the selector must NOT drift.
+        DataObject sameDay = RecurrenceRule.withStart(wednesday, "2026-08-05T21:00:00-05:00");
+        assertThat(sameDay.getArray("by_weekday").getInt(0)).isEqualTo(2);
+    }
+
+    @Test
+    void movingAcrossDatesUpdatesMonthlyAndYearlySelectors() {
+        DataObject monthly = DataObject.fromJson(
+                "{\"frequency\": 1, \"interval\": 1, \"by_n_weekday\": [{\"n\": 1, \"day\": 2}],"
+                        + " \"start\": \"" + START + "\"}");
+        // 2026-08-20 is a Thursday and the third Thursday of the month.
+        DataObject movedMonthly = RecurrenceRule.withStart(monthly, "2026-08-20T20:00:00-05:00");
+        DataObject nth = movedMonthly.getArray("by_n_weekday").getObject(0);
+        assertThat(nth.getInt("n")).isEqualTo(3);
+        assertThat(nth.getInt("day")).isEqualTo(3);
+
+        DataObject yearly = DataObject.fromJson(
+                "{\"frequency\": 0, \"interval\": 1, \"by_month\": [8], \"by_month_day\": [5],"
+                        + " \"start\": \"" + START + "\"}");
+        DataObject movedYearly = RecurrenceRule.withStart(yearly, "2026-12-25T20:00:00-06:00");
+        assertThat(movedYearly.getArray("by_month").getInt(0)).isEqualTo(12);
+        assertThat(movedYearly.getArray("by_month_day").getInt(0)).isEqualTo(25);
+    }
+
+    @Test
     void describesRulesInWordsSoRecurrenceIsVisible() {
         assertThat(RecurrenceRule.describe(
                 RecurrenceRule.parse("{\"frequency\": 2, \"by_weekday\": [2]}", START)))
