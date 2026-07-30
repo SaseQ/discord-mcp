@@ -113,6 +113,30 @@ public class ScheduledEventService {
      * <p>Needs its own spelling because an absent parameter already means "leave recurrence alone",
      * so there is no way to express {@code recurrence_rule: null} otherwise.
      */
+    /**
+     * Parse the status parameter once, so the terminal-transition guard and the setter can never
+     * disagree about what the caller asked for.
+     *
+     * @return the status code, or null when no status change was requested
+     */
+    private Integer parseStatus(String status) {
+        if (status == null || status.isBlank()) {
+            return null;
+        }
+        int code;
+        try {
+            code = Integer.parseInt(status.trim());
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(
+                    "status must be 1 (Scheduled), 2 (Active), 3 (Completed), or 4 (Canceled), got: " + status);
+        }
+        if (code < 1 || code > 4) {
+            throw new IllegalArgumentException(
+                    "status must be 1 (Scheduled), 2 (Active), 3 (Completed), or 4 (Canceled), got: " + code);
+        }
+        return code;
+    }
+
     /** Whether two rules pick the same point in the cycle, ignoring the anchor timestamp. */
     private boolean sameSelectors(DataObject a, DataObject b) {
         for (String selector : List.of("by_weekday", "by_n_weekday", "by_month", "by_month_day")) {
@@ -201,6 +225,14 @@ public class ScheduledEventService {
         DataObject rule = (recurrenceRule != null && !recurrenceRule.isEmpty())
                 ? RecurrenceRule.parse(recurrenceRule, scheduledStartTime)
                 : null;
+        // Same disagreement the edit path refuses: an event created at one time whose series is
+        // anchored at another follows the anchor, or fails the PATCH and leaves a stray one-off.
+        if (rule != null && !rule.getString("start", "").equals(scheduledStartTime)) {
+            throw new IllegalArgumentException(
+                    "scheduledStartTime is " + scheduledStartTime + " but the recurrence rule anchors at "
+                            + rule.getString("start", "") + ". They must match. Omit start from the rule to "
+                            + "have it default to the event's start time.");
+        }
 
         ScheduledEvent event = action.complete();
         String formatted = formatEvent(event);
@@ -263,8 +295,11 @@ public class ScheduledEventService {
         // modified. manager.complete() runs before the recurrence PATCH, so this combination would
         // apply the terminal transition, fail the recurrence write, and report overall failure on
         // a change that had already half happened and cannot be undone.
-        boolean terminalStatus = status != null && !status.isEmpty()
-                && (status.trim().equals("3") || status.trim().equals("4"));
+        // Parsed once and reused below. Comparing the raw string here while applying
+        // Integer.parseInt later meant "03" or "+3" read as non-terminal to the guard and as
+        // COMPLETED to the setter, which is precisely the combination the guard exists to stop.
+        Integer statusCode = parseStatus(status);
+        boolean terminalStatus = statusCode != null && (statusCode == 3 || statusCode == 4);
         // The implicit anchor move counts too: moving the start of a recurring event triggers a
         // recurrence PATCH even with no recurrenceRule supplied, and that write would land after
         // the terminal transition just the same.
@@ -283,8 +318,8 @@ public class ScheduledEventService {
         if (description != null && !description.isEmpty()) manager.setDescription(description);
         if (movingStart) manager.setStartTime(parseTime(scheduledStartTime));
         if (location != null && !location.isEmpty()) manager.setLocation(location);
-        if (status != null && !status.isEmpty()) {
-            manager.setStatus(switch (Integer.parseInt(status)) {
+        if (statusCode != null) {
+            manager.setStatus(switch (statusCode) {
                 case 1 -> ScheduledEvent.Status.SCHEDULED;
                 case 2 -> ScheduledEvent.Status.ACTIVE;
                 case 3 -> ScheduledEvent.Status.COMPLETED;
