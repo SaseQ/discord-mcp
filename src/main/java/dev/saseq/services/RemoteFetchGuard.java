@@ -7,6 +7,9 @@ import java.net.InetAddress;
 import java.net.URI;
 import java.net.URLConnection;
 import java.net.UnknownHostException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 
 /**
  * Shared guard for fetching caller-supplied URLs.
@@ -56,6 +59,45 @@ public final class RemoteFetchGuard {
     }
 
     /**
+     * The body was larger than the caller allowed.
+     *
+     * <p>Distinguishable from every other failure on purpose. A caller running a byte budget
+     * across several fetches needs to tell "this response was too big, and reading it spent the
+     * allowance" from "the host was unreachable, and it spent nothing" — the two have opposite
+     * consequences for what is left to spend. String-matching the message would work and would
+     * break the first time anyone reworded it.
+     */
+    public static class TooLargeException extends IllegalArgumentException {
+        TooLargeException(String message) {
+            super(message);
+        }
+    }
+
+    /**
+     * The transfer failed partway, after {@link #bytesConsumed()} bytes had already arrived.
+     *
+     * <p>A response that dies at 44 MB cost 44 MB of bandwidth, and a caller running a byte
+     * budget has to charge it — otherwise repeated mid-transfer failures pull far more than the
+     * budget allows while the counter never moves. The count is carried on the exception because
+     * only the read loop knows it.
+     *
+     * <p>The message stays deliberately generic for the same reason the plain failure path does:
+     * echoing the underlying {@link IOException} would turn this into a reachability prober.
+     */
+    public static class TransferFailedException extends IllegalArgumentException {
+        private final int bytesConsumed;
+
+        TransferFailedException(String message, int bytesConsumed) {
+            super(message);
+            this.bytesConsumed = bytesConsumed;
+        }
+
+        public int bytesConsumed() {
+            return bytesConsumed;
+        }
+    }
+
+    /**
      * Fetch a caller-supplied URL with SSRF protection and a size ceiling.
      *
      * @param url      the caller-supplied URL
@@ -99,11 +141,7 @@ public final class RemoteFetchGuard {
                                 "Refusing " + what + " URL: server returned HTTP " + status);
                     }
                 }
-                byte[] data = in.readNBytes(maxBytes + 1);
-                if (data.length > maxBytes) {
-                    throw new IllegalArgumentException(what + " exceeds the maximum allowed size");
-                }
-                return data;
+                return readBounded(in, maxBytes, what);
             }
         } catch (IOException e) {
             // Deliberately does not echo the underlying IOException. Passing it
@@ -112,6 +150,51 @@ public final class RemoteFetchGuard {
             throw new IllegalArgumentException("Failed to download " + what + " from URL");
         }
     }
+
+    /**
+     * Reads at most {@code maxBytes}, reporting how much arrived if the transfer fails.
+     *
+     * <p>Hand-rolled rather than {@code readNBytes(maxBytes + 1)} for one reason: {@code
+     * readNBytes} discards its partial buffer when the stream errors, so a caller cannot tell a
+     * failure that cost nothing from one that cost 44 MB. Both look identical, and a byte budget
+     * built on that distinction silently stops bounding anything.
+     */
+    private static byte[] readBounded(InputStream in, int maxBytes, String what) {
+        // Chunks in a list, assembled once — not a ByteArrayOutputStream. BAOS doubles its
+        // internal array as it grows and then toByteArray() copies again, so peak heap reaches
+        // roughly three times the body. This holds the data once plus the final array, matching
+        // what readNBytes did before, which matters because these limits are 50 MB and the
+        // deployment this was written for runs the JVM at a few hundred megabytes.
+        List<byte[]> chunks = new ArrayList<>();
+        int total = 0;
+        while (true) {
+            byte[] chunk = new byte[CHUNK_BYTES];
+            int read;
+            try {
+                read = in.read(chunk);
+            } catch (IOException e) {
+                throw new TransferFailedException("Failed to download " + what + " from URL", total);
+            }
+            if (read < 0) {
+                break;
+            }
+            total += read;
+            if (total > maxBytes) {
+                throw new TooLargeException(what + " exceeds the maximum allowed size");
+            }
+            chunks.add(read == CHUNK_BYTES ? chunk : Arrays.copyOf(chunk, read));
+        }
+
+        byte[] body = new byte[total];
+        int offset = 0;
+        for (byte[] chunk : chunks) {
+            System.arraycopy(chunk, 0, body, offset, chunk.length);
+            offset += chunk.length;
+        }
+        return body;
+    }
+
+    private static final int CHUNK_BYTES = 8192;
 
     private static void assertHostIsPublic(String host, String what) {
         InetAddress[] addresses;

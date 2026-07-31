@@ -15,10 +15,14 @@ import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.Base64;
 import java.util.List;
 
@@ -33,6 +37,19 @@ public class MessageService {
      */
     @Value("${DISCORD_MCP_FILE_ROOT:}")
     String fileRoot;
+
+    /**
+     * The only directory {@code download_attachment} may write to.
+     *
+     * <p>Deliberately a separate variable with <b>no fallback</b> to {@link #fileRoot}. Reading
+     * a directory and writing to it are different grants, and an existing deployment set
+     * {@code DISCORD_MCP_FILE_ROOT} to opt into the first one only. Falling back would mean
+     * upgrading the jar silently hands an LLM-driven tool write access to a directory chosen
+     * for uploads, with no configuration change and nothing to notice. Unset means downloads
+     * are refused, which matches how {@code fileRoot} already behaves.
+     */
+    @Value("${DISCORD_MCP_DOWNLOAD_ROOT:}")
+    String downloadRoot;
 
     public MessageService(JDA jda) {
         this.jda = jda;
@@ -96,7 +113,7 @@ public class MessageService {
      * @param message   Optional text content to accompany the file.
      * @return A confirmation message with a link to the sent message.
      */
-    @Tool(name = "send_file", description = "Send a file (attachment) to a specific channel. Provide the file as a local filePath OR a direct fileUrl OR base64 fileData (with fileName). Optionally include a text message. Max 25MB")
+    @Tool(name = "send_file", description = "Send a file (attachment) to a specific channel. Provide the file as a local filePath OR a direct fileUrl OR base64 fileData (with fileName). Optionally include a text message. Max 50MB — Discord accepts that only on boosted guilds; on an unboosted one it caps at 25MB and rejects larger uploads itself.")
     public String sendFile(@ToolParam(description = "Discord channel ID") String channelId,
                            @ToolParam(description = "Absolute path to a local file to upload", required = false) String filePath,
                            @ToolParam(description = "Direct URL to a file to upload (alternative to filePath)", required = false) String fileUrl,
@@ -114,7 +131,9 @@ public class MessageService {
 
         ResolvedFile resolvedFile = resolveFile(filePath, fileUrl, fileData, fileName);
         if (resolvedFile.bytes().length > MAX_UPLOAD_BYTES) {
-            throw new IllegalArgumentException("File exceeds 25 MB limit (" + (resolvedFile.bytes().length / (1024 * 1024)) + " MB). Discord rejects larger uploads for standard bots.");
+            throw new IllegalArgumentException("File exceeds the " + (MAX_UPLOAD_BYTES / (1024 * 1024))
+                    + " MB limit (" + (resolvedFile.bytes().length / (1024 * 1024)) + " MB). Discord's own"
+                    + " ceiling is lower below boost tier 2, so a smaller file may still be rejected there.");
         }
 
         FileUpload fileUpload = FileUpload.fromData(resolvedFile.bytes(), resolvedFile.name());
@@ -130,8 +149,12 @@ public class MessageService {
     private record ResolvedFile(byte[] bytes, String name) {
     }
 
-    // Discord rejects standard-bot uploads above 25 MB.
-    private static final int MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+    // Discord's own upload ceiling, which depends on the guild's boost level: 25 MB
+    // unboosted, 50 MB at tier 2, 100 MB at tier 3. Set to the tier-2 value so boosted
+    // guilds are not blocked by a limit of ours that is stricter than Discord's. An
+    // unboosted guild gets Discord's own rejection instead of this one, which is the
+    // correct authority for a limit we cannot determine locally.
+    private static final int MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
     private ResolvedFile resolveFile(String filePath, String fileUrl, String fileData, String fileName) {
         boolean hasPath = filePath != null && !filePath.isEmpty();
@@ -169,7 +192,7 @@ public class MessageService {
                 bytes = in.readNBytes(MAX_UPLOAD_BYTES + 1);
             }
             if (bytes.length > MAX_UPLOAD_BYTES) {
-                throw new IllegalArgumentException("File exceeds the 25 MB limit. Discord rejects larger uploads for standard bots.");
+                throw new IllegalArgumentException("File exceeds the " + (MAX_UPLOAD_BYTES / (1024 * 1024)) + " MB limit.");
             }
             String name = overrideName != null ? overrideName : path.getFileName().toString();
             return new ResolvedFile(bytes, name);
@@ -219,20 +242,68 @@ public class MessageService {
                     "Local filePath uploads are disabled. Set DISCORD_MCP_FILE_ROOT to an "
                             + "allowed directory, or supply fileUrl or base64 fileData instead.");
         }
-        Path root;
+        return resolveRoot(fileRoot, "DISCORD_MCP_FILE_ROOT");
+    }
+
+    private Path allowedDownloadRoot() {
+        if (downloadRoot == null || downloadRoot.isBlank()) {
+            throw new IllegalArgumentException(
+                    "Attachment downloads are disabled. Set DISCORD_MCP_DOWNLOAD_ROOT to the "
+                            + "directory this server may write downloads into. It is separate "
+                            + "from DISCORD_MCP_FILE_ROOT on purpose: read and write are "
+                            + "different grants.");
+        }
+        Path root = resolveRoot(downloadRoot, "DISCORD_MCP_DOWNLOAD_ROOT");
+        // Existing and writable are different things, and a read-only bind mount is a common
+        // way to get the first without the second. Without this probe the failure surfaces only
+        // at createTempFile, by which point the whole 100 MB budget may already have been pulled
+        // from the CDN to be thrown away. Same reasoning as resolving the root before fetching:
+        // spend the cheap check first.
+        // Cheap check first: it costs no file at all, and catches the ordinary permissions case
+        // so the probe below only runs where it might actually tell us something new. isWritable
+        // alone is not enough — it can report true for a read-only bind mount.
+        if (!Files.isWritable(root)) {
+            throw new IllegalArgumentException(
+                    "DISCORD_MCP_DOWNLOAD_ROOT is not writable by this process: " + root
+                            + ". Nothing was downloaded.");
+        }
+        Path probe = null;
         try {
-            root = Paths.get(fileRoot).toRealPath();
+            probe = Files.createTempFile(root, ".writable-", ".probe");
         } catch (IOException e) {
             throw new IllegalArgumentException(
-                    "DISCORD_MCP_FILE_ROOT does not exist or cannot be resolved: " + fileRoot);
+                    "DISCORD_MCP_DOWNLOAD_ROOT is not writable by this process: " + root
+                            + " (" + e.getMessage() + "). Nothing was downloaded.");
+        } finally {
+            // Cleanup is separate from the diagnosis above on purpose: a failed delete does not
+            // mean the directory is unwritable, and saying so would send someone to fix the
+            // wrong thing. A probe stranded by a SIGKILL between the two calls is inert.
+            if (probe != null) {
+                try {
+                    Files.deleteIfExists(probe);
+                } catch (IOException ignored) {
+                    // Nothing to do, and nothing worth failing the call over.
+                }
+            }
+        }
+        return root;
+    }
+
+    private Path resolveRoot(String configured, String variableName) {
+        Path root;
+        try {
+            root = Paths.get(configured).toRealPath();
+        } catch (IOException e) {
+            throw new IllegalArgumentException(
+                    variableName + " does not exist or cannot be resolved: " + configured);
         }
         if (!Files.isDirectory(root)) {
-            throw new IllegalArgumentException("DISCORD_MCP_FILE_ROOT is not a directory: " + fileRoot);
+            throw new IllegalArgumentException(variableName + " is not a directory: " + configured);
         }
         // A filesystem root has no name components. Accepting "/" would confine
         // nothing at all and silently re-open the whole vulnerability.
         if (root.getNameCount() == 0) {
-            throw new IllegalArgumentException("DISCORD_MCP_FILE_ROOT must not be a filesystem root");
+            throw new IllegalArgumentException(variableName + " must not be a filesystem root");
         }
         return root;
     }
@@ -537,6 +608,409 @@ public class MessageService {
         return sb.toString().trim();
     }
 
+    /**
+     * Downloads a message's attachments into the allowed file directory.
+     *
+     * <p>Deliberately takes IDs rather than a URL. The URLs are resolved here, from Discord,
+     * so this is not a general fetch-anything-to-disk tool and cannot be pointed at the host's
+     * private network. It also sidesteps the reason a caller would want one: Discord CDN links
+     * are signed and expire, so a URL copied out of an earlier tool result is usually dead by
+     * the time anyone tries to use it. Re-resolving from the message is always fresh.
+     *
+     * @param channelId    The ID of the channel containing the message.
+     * @param messageId    The ID of the message to download attachments from.
+     * @param attachmentId Optional ID of a specific attachment (if omitted, downloads all).
+     * @return A formatted list of the saved file paths.
+     */
+    @Tool(name = "download_attachment", description = "Download a message's attachments to the server's download directory (DISCORD_MCP_DOWNLOAD_ROOT) and return the saved paths. Use get_attachment instead if you only need metadata. Max 50MB per file, 100MB per call.")
+    public String downloadAttachment(@ToolParam(description = "Discord channel ID") String channelId,
+                                     @ToolParam(description = "Discord message ID") String messageId,
+                                     @ToolParam(description = "Specific attachment ID (omit to download all)", required = false) String attachmentId) {
+        if (channelId == null || channelId.isEmpty()) {
+            throw new IllegalArgumentException("channelId cannot be null");
+        }
+        if (messageId == null || messageId.isEmpty()) {
+            throw new IllegalArgumentException("messageId cannot be null");
+        }
+
+        // Resolve the root before spending any network calls, so a misconfigured
+        // root fails immediately instead of after downloading 50 MB.
+        Path root = allowedDownloadRoot();
+
+        MessageChannel channel = getMessageChannelById(channelId);
+        if (channel == null) {
+            throw new IllegalArgumentException("Channel not found by channelId");
+        }
+        Message message = channel.retrieveMessageById(messageId).complete();
+        if (message == null) {
+            throw new IllegalArgumentException("Message not found by messageId");
+        }
+
+        List<Message.Attachment> attachments = message.getAttachments();
+        if (attachments.isEmpty()) {
+            return "This message has no attachments.";
+        }
+        if (attachmentId != null && !attachmentId.isEmpty()) {
+            attachments = attachments.stream()
+                    .filter(a -> a.getId().equals(attachmentId))
+                    .toList();
+            if (attachments.isEmpty()) {
+                throw new IllegalArgumentException("Attachment not found by attachmentId");
+            }
+        }
+
+        assertWithinDownloadLimits(attachments);
+
+        // Per-attachment failures are collected rather than thrown. Throwing on the second of
+        // three would abandon the first: already committed to disk, and its path lost with the
+        // stack — the same partial-result problem the size preflight exists to avoid, just moved
+        // later. Reporting both halves is safe to act on because writes are keyed by attachment
+        // ID, so retrying the call rewrites the same paths instead of accumulating duplicates.
+        StringBuilder saved = new StringBuilder();
+        StringBuilder failed = new StringBuilder();
+        int savedCount = 0;
+        // Bytes *attempted*, not bytes kept. Counting only what was kept cannot bound anything:
+        // the guard rejects an over-allowance body by throwing, so a rejected fetch consumed the
+        // wire and left the running total untouched, and the next attachment would be handed the
+        // same allowance again. Ten attachments understating their size would each pull the
+        // per-file cap before being rejected — the half-gigabyte call this budget exists to rule
+        // out. Charging the allowance for a rejection is what makes the budget a real ceiling.
+        long attempted = 0;
+        int index = 0;
+        for (Message.Attachment attachment : attachments) {
+            index++;
+            long remainingBudget = MAX_DOWNLOAD_BUDGET_BYTES - attempted;
+            if (remainingBudget <= 0) {
+                // Checked before computing an allowance, so the guard is never called with zero
+                // — that would fail with its generic "exceeds the maximum allowed size", which
+                // blames the file when the call budget is what ran out.
+                failed.append("- ").append(attachments.size() - index + 1)
+                        .append(" further attachment(s): not attempted, the call's ")
+                        .append(MAX_DOWNLOAD_BUDGET_BYTES / (1024 * 1024))
+                        .append(" MB total was already spent.\n");
+                break;
+            }
+            int allowance = (int) Math.min(MAX_DOWNLOAD_FILE_BYTES, remainingBudget);
+            try {
+                byte[] bytes = RemoteFetchGuard.fetch(attachment.getUrl(), allowance, "attachment");
+                attempted += bytes.length;
+                Path path = writeIntoAllowedRoot(root, attachment.getId(), attachment.getFileName(), bytes);
+                saved.append("- `").append(path).append("` (").append(formatFileSize(bytes.length)).append(")\n");
+                savedCount++;
+            } catch (RemoteFetchGuard.TooLargeException e) {
+                // The body was read up to the allowance before being rejected, so that bandwidth
+                // is spent whether or not anything reached disk. Say which limit bound it: the
+                // per-file cap and "the rest of this call's budget" are different problems with
+                // different fixes, and the guard's own message cannot tell them apart.
+                attempted += allowance;
+                failed.append("- `").append(attachment.getFileName()).append("` (ID ")
+                        .append(attachment.getId()).append("): body exceeded the ")
+                        // formatFileSize, not integer MB: the remainder of a budget is routinely
+                        // under a megabyte, and "exceeded the 0 MB allowed for it" reads as a bug.
+                        .append(formatFileSize(allowance)).append(" allowed for it")
+                        .append(allowance < MAX_DOWNLOAD_FILE_BYTES
+                                ? " — all that was left of this call's budget. Fetch it on its own."
+                                : ", the per-file limit. Its reported size understated the body.")
+                        .append("\n");
+            } catch (RemoteFetchGuard.TransferFailedException e) {
+                // A transfer that died partway still cost what had already arrived. Without this
+                // the counter never moves for a mid-transfer reset, and ten of them pull most of
+                // the per-file cap each while the budget reads as untouched.
+                attempted += e.bytesConsumed();
+                failed.append("- `").append(attachment.getFileName()).append("` (ID ")
+                        .append(attachment.getId()).append("): transfer failed after ")
+                        .append(formatFileSize(e.bytesConsumed())).append(".\n");
+            } catch (RuntimeException e) {
+                // Everything else — unreachable host, 404, refused scheme — failed before any
+                // body arrived, so it does not charge the budget. Charging these would let a
+                // couple of 404s cut a call short over failures that cost nothing.
+                failed.append("- `").append(attachment.getFileName()).append("` (ID ")
+                        .append(attachment.getId()).append("): ").append(reasonOf(e)).append("\n");
+            }
+        }
+
+        if (savedCount == 0) {
+            throw new IllegalArgumentException("No attachments were downloaded.\n" + failed.toString().trim());
+        }
+
+        StringBuilder result = new StringBuilder();
+        result.append("**Downloaded ").append(savedCount).append(" of ").append(attachments.size())
+                .append(" attachment(s) to ").append(root).append(":**\n").append(saved);
+        if (failed.length() > 0) {
+            result.append("\n**Failed, and not saved. Re-running is safe — it overwrites in place ")
+                    .append("rather than duplicating:**\n").append(failed);
+        }
+        return result.toString().trim();
+    }
+
+    /**
+     * Rejects an oversized set before the first byte is fetched.
+     *
+     * <p>Checking after each download would still be correct, but it fails in the worst possible
+     * place: the offending file is already in the heap, its siblings are already on disk, and the
+     * caller gets an exception instead of the paths — so the files it did write are left in the
+     * root unmentioned, for a tool whose entire contract is returning where things landed.
+     * {@code getSize()} is metadata already carried on the message, so this costs no network call.
+     */
+    private void assertWithinDownloadLimits(List<Message.Attachment> attachments) {
+        long total = 0;
+        for (Message.Attachment attachment : attachments) {
+            long size = attachment.getSize();
+            if (size > MAX_DOWNLOAD_FILE_BYTES) {
+                throw new IllegalArgumentException(String.format(
+                        "Attachment `%s` (ID %s) is %s, over the %d MB per-file download limit.",
+                        attachment.getFileName(), attachment.getId(), formatFileSize(size),
+                        MAX_DOWNLOAD_FILE_BYTES / (1024 * 1024)));
+            }
+            total += size;
+        }
+        if (total > MAX_DOWNLOAD_BUDGET_BYTES) {
+            throw new IllegalArgumentException(String.format(
+                    "The %d attachments total %s, over the %d MB per-call download limit. "
+                            + "Pass attachmentId to fetch them one at a time.",
+                    attachments.size(), formatFileSize(total), MAX_DOWNLOAD_BUDGET_BYTES / (1024 * 1024)));
+        }
+    }
+
+    /**
+     * Per-file download ceiling.
+     *
+     * <p>Not {@link #MAX_UPLOAD_BYTES}: that one is Discord's limit on what a standard bot may
+     * <i>send</i>, and inbound attachments are not bound by it — a Nitro user or a boosted guild
+     * can exceed it. Reusing it would tie the download limit to a send-side ceiling that moves
+     * with the guild's boost level, and would have rejected such a file with the guard's
+     * generic size message, naming neither the file nor the real reason.
+     */
+    private static final int MAX_DOWNLOAD_FILE_BYTES = 50 * 1024 * 1024;
+
+    // One message can carry ten attachments, so the per-file cap alone would allow half a
+    // gigabyte from a single call. Kept at twice the per-file cap so a normal multi-image
+    // post still goes through in one call while a pathological one does not.
+    private static final long MAX_DOWNLOAD_BUDGET_BYTES = 2L * MAX_DOWNLOAD_FILE_BYTES;
+
+    /**
+     * Writes one attachment into the allowed root under a name derived from Discord's.
+     *
+     * <p>The filename comes from whoever uploaded the file, so it is untrusted: it is reduced to
+     * a single path component here rather than resolved, because {@code root.resolve("../x")}
+     * happily escapes. The {@code <attachmentId>-} prefix makes names collision-free <i>across</i>
+     * attachments; the same attachment fetched twice overwrites its own file.
+     *
+     * <p>Written to a temporary file and moved into place rather than written directly. Three
+     * things fall out of that: an interrupted or failing write cannot destroy an already-archived
+     * copy or leave a truncated one, {@code rename(2)} replaces a symlink at the target rather
+     * than following it, and two concurrent calls for the same attachment cannot collide — the
+     * HTTP profile is a shared singleton, so that is reachable.
+     *
+     * @param root the already-validated download root; taken as a parameter so tests can supply
+     *             one, which means the confinement below is only as strong as what the single
+     *             caller passes. Any second caller must pass {@link #allowedDownloadRoot()} too.
+     */
+    // Package-private so tests can exercise the untrusted-filename cases without a live message.
+    Path writeIntoAllowedRoot(Path root, String attachmentId, String fileName, byte[] bytes) {
+        Path target = root.resolve(attachmentId + "-" + sanitizeFileName(fileName));
+        if (!target.getParent().equals(root)) {
+            // Not merely a backstop for sanitizeFileName: attachmentId is interpolated straight
+            // in, unsanitized. It is a Discord snowflake today, so it cannot contain a separator
+            // — this check is what makes that an assumption the code verifies rather than one it
+            // relies on, and it matters most for the second caller the javadoc above anticipates.
+            throw new IllegalArgumentException("Refusing to write outside the allowed directory");
+        }
+        Path temporary = null;
+        try {
+            temporary = Files.createTempFile(root, ".download-", ".part");
+            Files.write(temporary, bytes, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
+            relaxTempFileMode(temporary);
+            try {
+                Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } catch (IOException e) {
+                // Not just AtomicMoveNotSupportedException. Under the ATOMIC_MOVE contract the
+                // other options are "ignored" and replacing an existing target is left
+                // provider-specific, so a provider may refuse with a plain IOException instead.
+                // The default providers all replace — verified on Windows, where the concern is
+                // usually raised — so this path is unreachable in practice, but it is the only
+                // path that can lose an archived file, which is reason enough to make it safe.
+                replaceWithoutAtomicMove(root, temporary, target);
+            }
+            temporary = null;
+        } catch (IOException e) {
+            throw new IllegalArgumentException("Failed to save attachment: " + e.getMessage());
+        } finally {
+            if (temporary != null) {
+                try {
+                    Files.deleteIfExists(temporary);
+                } catch (IOException ignored) {
+                    // Best effort. A leftover .part file is inert and better than masking
+                    // the real failure being thrown above.
+                }
+            }
+        }
+        return target;
+    }
+
+    /**
+     * Replaces {@code target} without {@code ATOMIC_MOVE}, without risking the file already there.
+     *
+     * <p>A plain {@code REPLACE_EXISTING} move deletes the target first and then leaves source and
+     * target in an undefined state if it fails partway — so the one path that exists to preserve an
+     * archived copy could destroy it. The existing file is moved aside first and put back if the
+     * replacement does not land, which makes the method's guarantee hold on a provider that refuses
+     * atomic moves as well as on the ones that do not.
+     */
+    private static void replaceWithoutAtomicMove(Path root, Path temporary, Path target) throws IOException {
+        Path rescued = null;
+        // Only a regular file or a symlink is worth rescuing — those are the shapes this tool
+        // writes, so those are the ones that can be a previous download. Anything else at that
+        // path was not put there by us and is not ours to move aside; let the replace below fail
+        // against it, which is what a directory sitting on the target name should do.
+        if (Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(target)) {
+            // A unique name per invocation, not "<target>.replaced". Two concurrent calls for
+            // the same attachment would otherwise share one rescue path, and the second could
+            // delete the copy the first is still relying on to restore — turning a safety net
+            // into the way the file disappears. createTempFile then delete leaves the name
+            // reserved to this call; the window is inside our own root and harmless.
+            rescued = Files.createTempFile(root, ".replaced-", ".bak");
+            Files.delete(rescued);
+            Files.move(target, rescued, StandardCopyOption.REPLACE_EXISTING);
+        }
+        try {
+            Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException e) {
+            if (rescued != null && !Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+                try {
+                    Files.move(rescued, target);
+                } catch (IOException restoreFailed) {
+                    // Say where it went rather than let it look like the file simply vanished.
+                    e.addSuppressed(new IOException(
+                            "the previous copy could not be restored and is at " + rescued, restoreFailed));
+                }
+            }
+            throw e;
+        }
+        if (rescued != null) {
+            try {
+                Files.deleteIfExists(rescued);
+            } catch (IOException cleanupFailed) {
+                // The replacement already landed. Failing the call now would report a successful
+                // write as a failure and invite a retry that has nothing left to fix.
+            }
+        }
+    }
+
+    /**
+     * Widens a temp file from {@code createTempFile}'s owner-only mode to {@code rw-r-----}.
+     *
+     * <p>{@link Files#createTempFile} deliberately creates 0600, which a direct write would not
+     * have. Left alone, every saved attachment would be readable only by the service account —
+     * and there is no directory-level arrangement that fixes that after the fact. Directory
+     * ownership governs the entry, not the file's contents, and a POSIX default ACL is masked by
+     * the mode the file was created with, so 0600 defeats that too. The only ways out are running
+     * both components as one user or giving the file a group.
+     *
+     * <p>Group-readable rather than world-readable: it makes the shared-group deployment work
+     * (a setgid download directory gives saved files its group) without publishing Discord
+     * attachments to every account on the host. Silently skipped on filesystems without POSIX
+     * permissions, where 0600 was never the behaviour anyway.
+     */
+    private static void relaxTempFileMode(Path temporary) {
+        if (!temporary.getFileSystem().supportedFileAttributeViews().contains("posix")) {
+            return;
+        }
+        try {
+            Files.setPosixFilePermissions(temporary, PosixFilePermissions.fromString("rw-r-----"));
+        } catch (IOException | UnsupportedOperationException e) {
+            // The download is still correct at 0600; a consumer that cannot read it is a
+            // deployment problem to surface there, not a reason to fail the write here.
+        }
+    }
+
+    /**
+     * A reportable reason for a failure.
+     *
+     * <p>{@code getMessage()} is null for some RuntimeExceptions, and a literal "null" in text the
+     * model reads and acts on is worse than a vague noun.
+     */
+    private static String reasonOf(RuntimeException e) {
+        return e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+    }
+
+    static String sanitizeFileName(String fileName) {
+        if (fileName == null || fileName.isBlank()) {
+            return "attachment";
+        }
+        // Allowlist, not a blocklist of separators: this has to hold on both POSIX and
+        // Windows, where '\' and ':' are separators too. Letters and digits are matched by
+        // Unicode category rather than by ASCII range, so `résumé.pdf` and `写真.png` survive
+        // as themselves instead of arriving as `r_sum_.pdf` and `__.png`. That is safe because
+        // no separator, control character or bidi override is a letter or a digit, and because
+        // the caller independently verifies the resolved target is a direct child of the root.
+        StringBuilder sb = new StringBuilder(fileName.length());
+        fileName.codePoints().forEach(cp -> {
+            if (Character.isLetterOrDigit(cp) || cp == '.' || cp == '_' || cp == '-') {
+                sb.appendCodePoint(cp);
+            } else {
+                sb.append('_');
+            }
+        });
+        // A leading dot would produce a hidden file; a name of only dots would resolve
+        // to the directory itself.
+        String cleaned = sb.toString().replaceAll("^\\.+", "");
+        if (cleaned.isBlank()) {
+            return "attachment";
+        }
+        cleaned = truncateToBytes(cleaned, MAX_NAME_BYTES);
+        if (cleaned.isBlank()) {
+            return "attachment";
+        }
+        // Windows reserves these regardless of extension, and opening `CON.png` there does
+        // something other than open a file. Harmless today because callers prefix an
+        // attachment ID — but the truncation comment above promises not to rely on that, and
+        // a promise that holds for one hazard and not another is worse than no promise.
+        return WINDOWS_DEVICE_NAMES.matcher(cleaned).matches() ? "_" + cleaned : cleaned;
+    }
+
+    private static final java.util.regex.Pattern WINDOWS_DEVICE_NAMES = java.util.regex.Pattern.compile(
+            "(?i)(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\\..*)?");
+
+    /**
+     * Byte budget for the sanitized part of a saved filename.
+     *
+     * <p>Bytes, not characters. {@code NAME_MAX} is 255 <i>bytes</i> on ext4, and one CJK
+     * character is three of them — so a 120-character limit permits a 360-byte name, which
+     * {@code createTempFile} accepts (its own name is short) and the rename then rejects with
+     * {@code ENAMETOOLONG}. That combination only became reachable when this method started
+     * preserving non-ASCII names, and it would have failed a perfectly ordinary upload.
+     *
+     * <p>200 leaves room for the caller's {@code <snowflake>-} prefix, which is 20 bytes, and
+     * keeps the total comfortably inside 255 without depending on that prefix's exact length.
+     */
+    private static final int MAX_NAME_BYTES = 200;
+
+    /**
+     * Trims to a UTF-8 byte budget from the front, never splitting a character.
+     *
+     * <p>Keeps the tail because that is where the extension is, then re-strips leading dots and
+     * dashes: cutting mid-name can expose a new one, and the result should not depend on callers
+     * prefixing an attachment ID even though they do.
+     */
+    private static String truncateToBytes(String value, int maxBytes) {
+        if (value.getBytes(StandardCharsets.UTF_8).length <= maxBytes) {
+            return value;
+        }
+        int[] codePoints = value.codePoints().toArray();
+        int bytes = 0;
+        int start = codePoints.length;
+        while (start > 0) {
+            int width = new String(Character.toChars(codePoints[start - 1])).getBytes(StandardCharsets.UTF_8).length;
+            if (bytes + width > maxBytes) {
+                break;
+            }
+            bytes += width;
+            start--;
+        }
+        return new String(codePoints, start, codePoints.length - start).replaceAll("^[.\\-]+", "");
+    }
+
     private String formatAttachmentDetail(Message.Attachment attachment) {
         return String.format(
                 "- %s\n  Proxy URL: %s",
@@ -587,7 +1061,9 @@ public class MessageService {
                 }).toList();
     }
 
-    private String formatFileSize(int bytes) {
+    // long rather than int: a per-call total can exceed Integer.MAX_VALUE even though
+    // any single attachment cannot. Widening is source-compatible with the int callers.
+    private String formatFileSize(long bytes) {
         if (bytes < 1024) return bytes + " B";
         if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024.0);
         if (bytes < 1024 * 1024 * 1024) return String.format("%.1f MB", bytes / (1024.0 * 1024));

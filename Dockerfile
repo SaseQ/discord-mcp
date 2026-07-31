@@ -18,9 +18,13 @@ ENV DISCORD_GUILD_ID=""
 
 # Run as an unprivileged user so a compromised dependency can't act as root in the container.
 # Pre-create the log directory and hand ownership to the app user, since /app is root-owned.
+#
+# The download directory is created here for the same reason plus one more: Docker seeds a
+# fresh named volume from whatever is at the mount point in the image, ownership included.
+# Without this the volume would arrive root-owned and every download would fail as `app`.
 RUN addgroup -S app && adduser -S -G app app \
-    && mkdir -p /app/target/logs \
-    && chown -R app:app /app/target
+    && mkdir -p /app/target/logs /var/lib/discord-mcp/downloads \
+    && chown -R app:app /app/target /var/lib/discord-mcp
 USER app
 
 # Note: this image targets the default stdio transport (no listening port), so the HTTP
