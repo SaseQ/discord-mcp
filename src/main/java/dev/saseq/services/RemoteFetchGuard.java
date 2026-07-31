@@ -158,8 +158,17 @@ public final class RemoteFetchGuard {
      * readNBytes} discards its partial buffer when the stream errors, so a caller cannot tell a
      * failure that cost nothing from one that cost 44 MB. Both look identical, and a byte budget
      * built on that distinction silently stops bounding anything.
+     *
+     * @param maxBytes the ceiling, which must be non-negative
      */
-    private static byte[] readBounded(InputStream in, int maxBytes, String what) {
+    // Package-private so RemoteFetchGuardTest can call it directly, as it already does with
+    // isBlocked. Reflection would drop compile-time checking of this signature.
+    static byte[] readBounded(InputStream in, int maxBytes, String what) {
+        if (maxBytes < 0) {
+            // Cheaper than the NegativeArraySizeException the allocation below would raise, and
+            // it names the actual problem. Unreachable from either caller today.
+            throw new IllegalArgumentException("maxBytes must be non-negative, was " + maxBytes);
+        }
         // Chunks in a list, assembled once — not a ByteArrayOutputStream. BAOS doubles its
         // internal array as it grows and then toByteArray() copies again, so peak heap reaches
         // roughly three times the body. This holds the data once plus the final array, matching
@@ -168,21 +177,36 @@ public final class RemoteFetchGuard {
         List<byte[]> chunks = new ArrayList<>();
         int total = 0;
         while (true) {
-            byte[] chunk = new byte[CHUNK_BYTES];
+            // At most what the allowance leaves, plus the one byte that tells "at the limit"
+            // from "over" it. A full chunk regardless let maxBytes + 8191 reach this loop while
+            // the caller charges the allowance, so a byte budget drifted by a chunk per
+            // rejection. It now drifts by one byte the other way, which is the better side to
+            // be wrong on.
+            //
+            // Accounting only, not bandwidth: HttpURLConnection buffers from the socket
+            // regardless of what is requested here.
+            //
+            // The long cast stops this wrapping at maxBytes near Integer.MAX_VALUE. It covers
+            // the allocation; the accumulator below is guarded separately.
+            int want = (int) Math.min(CHUNK_BYTES, (long) maxBytes - total + 1);
+            byte[] chunk = new byte[want];
             int read;
             try {
-                read = in.read(chunk);
+                read = in.read(chunk, 0, want);
             } catch (IOException e) {
                 throw new TransferFailedException("Failed to download " + what + " from URL", total);
             }
             if (read < 0) {
                 break;
             }
-            total += read;
-            if (total > maxBytes) {
+            // Compared before adding. Summing first overflows when maxBytes is near
+            // Integer.MAX_VALUE — total wraps negative and the bound silently disappears.
+            // Subtracting cannot, given the invariant total <= maxBytes.
+            if (read > maxBytes - total) {
                 throw new TooLargeException(what + " exceeds the maximum allowed size");
             }
-            chunks.add(read == CHUNK_BYTES ? chunk : Arrays.copyOf(chunk, read));
+            total += read;
+            chunks.add(read == chunk.length ? chunk : Arrays.copyOf(chunk, read));
         }
 
         byte[] body = new byte[total];

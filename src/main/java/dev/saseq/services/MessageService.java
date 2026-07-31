@@ -267,26 +267,41 @@ public class MessageService {
                     "DISCORD_MCP_DOWNLOAD_ROOT is not writable by this process: " + root
                             + ". Nothing was downloaded.");
         }
+        // Every download creates a temp file and renames it. Windows and NFSv4 ACLs grant those
+        // separately, so both are probed — and replacement is a third right, deliberately not
+        // probed, so a directory that only allows new files still works for first downloads.
+        // Untestable on POSIX, where rename needs the same directory write bit as create.
         Path probe = null;
         try {
             probe = Files.createTempFile(root, ".writable-", ".probe");
+            Path renamed = root.resolve(probe.getFileName().toString() + ".moved");
+            Files.move(probe, renamed);
+            probe = renamed;
         } catch (IOException e) {
+            // Claims only what the probe observed: a full disk or an fd limit lands here too,
+            // and calling either a permissions problem sends someone to fix the wrong thing.
             throw new IllegalArgumentException(
-                    "DISCORD_MCP_DOWNLOAD_ROOT is not writable by this process: " + root
+                    "Could not create and rename a file in DISCORD_MCP_DOWNLOAD_ROOT, which "
+                            + "saving an attachment requires: " + root
                             + " (" + e.getMessage() + "). Nothing was downloaded.");
         } finally {
-            // Cleanup is separate from the diagnosis above on purpose: a failed delete does not
-            // mean the directory is unwritable, and saying so would send someone to fix the
-            // wrong thing. A probe stranded by a SIGKILL between the two calls is inert.
-            if (probe != null) {
-                try {
-                    Files.deleteIfExists(probe);
-                } catch (IOException ignored) {
-                    // Nothing to do, and nothing worth failing the call over.
-                }
-            }
+            // Best-effort: a failed delete does not mean the directory cannot be written to,
+            // which the probe above establishes directly.
+            deleteQuietly(probe);
         }
         return root;
+    }
+
+    /** Best-effort removal of a scratch file, where failing to clean up is not worth an error. */
+    private static void deleteQuietly(Path path) {
+        if (path == null) {
+            return;
+        }
+        try {
+            Files.deleteIfExists(path);
+        } catch (IOException ignored) {
+            // Nothing to do, and nothing worth failing the call over.
+        }
     }
 
     private Path resolveRoot(String configured, String variableName) {
@@ -836,14 +851,9 @@ public class MessageService {
         } catch (IOException e) {
             throw new IllegalArgumentException("Failed to save attachment: " + e.getMessage());
         } finally {
-            if (temporary != null) {
-                try {
-                    Files.deleteIfExists(temporary);
-                } catch (IOException ignored) {
-                    // Best effort. A leftover .part file is inert and better than masking
-                    // the real failure being thrown above.
-                }
-            }
+            // Best effort. A leftover .part file is inert and better than masking the real
+            // failure being thrown above.
+            deleteQuietly(temporary);
         }
         return target;
     }
