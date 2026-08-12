@@ -2,6 +2,7 @@ package dev.saseq.services;
 
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.entities.Guild;
+import net.dv8tion.jda.api.entities.Icon;
 import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.entities.ScheduledEvent;
 import net.dv8tion.jda.api.entities.channel.middleman.GuildChannel;
@@ -14,6 +15,7 @@ import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
@@ -330,6 +332,13 @@ public class ScheduledEventService {
         if (event.getDescription() != null && !event.getDescription().isEmpty()) {
             sb.append("\n  • Description: ").append(event.getDescription());
         }
+        // Reported for both states. "no cover image" is the more useful of the two answers and the
+        // one that was previously unobtainable: an event's cover was invisible here, so a caller
+        // asking what a listing showed could only guess. A stale cover looks identical to a
+        // correct one from the outside, and one of these events ran for six months showing a
+        // poster for a different month.
+        String image = event.getImageUrl();
+        sb.append("\n  • Cover image: ").append(image == null ? "none" : image);
         sb.append("\n  • Interested: ").append(event.getInterestedUserCount()).append(" users");
         return sb.toString();
     }
@@ -584,6 +593,116 @@ public class ScheduledEventService {
                     .append("). The recurrence rule was not changed.");
         }
         return result.toString();
+    }
+
+    /**
+     * Discord's ceiling for a scheduled event cover.
+     *
+     * <p>Worth knowing when this fires: the posters this exists to crop are square masters at
+     * 4096px and up, which land between 6 MB and 17 MB. Hitting the limit is the normal case for
+     * an uncropped master, not an unusual one, so the error says what to do about it.
+     */
+    private static final int MAX_COVER_BYTES = 10 * 1024 * 1024;
+
+    @Value("${DISCORD_MCP_FILE_ROOT:}")
+    String coverFileRoot;
+
+    /**
+     * Deliberately its own tool rather than an {@code image} parameter on
+     * {@code edit_guild_scheduled_event}.
+     *
+     * <p>That tool is already granted wherever events are managed at all, and it reaches nothing
+     * but the Discord API. Adding an image parameter would extend it to the local filesystem
+     * without the grant changing, so every deployment that allowed event editing would silently
+     * acquire a local-file read. Splitting it keeps the two decisions separate: a deployment can
+     * allow event edits and refuse cover uploads.
+     */
+    @Tool(name = "set_guild_scheduled_event_image", description = "Replace a scheduled event's cover image with a local PNG or JPEG. The file must be under DISCORD_MCP_FILE_ROOT — use download_attachment to put a poster there first. Discord shows the middle 5:2 band of what you upload, so crop to that shape before calling. Max 10MB, no animation.")
+    public String setScheduledEventImage(
+            @ToolParam(description = "Discord server ID", required = false) String guildId,
+            @ToolParam(description = "ID of the scheduled event") String eventId,
+            @ToolParam(description = "Absolute path to a local PNG or JPEG file") String filePath) {
+        if (filePath == null || filePath.isEmpty()) {
+            throw new IllegalArgumentException("filePath cannot be null");
+        }
+        if (coverFileRoot == null || coverFileRoot.isBlank()) {
+            throw new IllegalArgumentException(
+                    "Setting a cover image is disabled. Set DISCORD_MCP_FILE_ROOT to the directory "
+                            + "this server may read uploads from.");
+        }
+
+        // The file is resolved, read and identified before the event is looked up at all. Both
+        // orders work, but this one keeps a rejected path from revealing whether an event exists,
+        // and the confinement check is the part that must not be reachable around.
+        Path path = LocalFileGuard.resolveWithinRoot(
+                filePath, LocalFileGuard.resolveRoot(coverFileRoot, "DISCORD_MCP_FILE_ROOT"),
+                "filePath", "upload");
+        byte[] bytes = LocalFileGuard.readBounded(path, MAX_COVER_BYTES, "Cover image");
+        Icon.IconType type = coverType(bytes);
+
+        Guild guild = getGuild(guildId);
+        ScheduledEvent event = getEvent(guild, eventId);
+        String before = event.getImageUrl();
+        event.getManager().setImage(Icon.from(bytes, type)).complete();
+
+        // Re-read rather than trusting the write. The manager reports success on an accepted
+        // request, but the entity in memory keeps the old hash, so reporting from it would print
+        // the previous cover as though it were the new one — a success message that shows the
+        // wrong image is worse than no message. This is also the only confirmation available that
+        // Discord kept what it was given.
+        String after;
+        try {
+            DataObject raw = fetchRaw(guild.getId(), event.getId());
+            String hash = raw.getString("image", null);
+            after = hash == null ? null : String.format(ScheduledEvent.IMAGE_URL, event.getId(), hash, "png");
+        } catch (RuntimeException e) {
+            return "Set the cover image on " + event.getName() + " (ID: " + event.getId() + ") from "
+                    + path.getFileName() + ", but could not read the event back to confirm it ("
+                    + e.getMessage() + "). Check the event before uploading again.";
+        }
+
+        StringBuilder result = new StringBuilder("Set the cover image on ")
+                .append(event.getName()).append(" (ID: ").append(event.getId()).append(")")
+                .append("\n  • From: ").append(path.getFileName())
+                .append(" (").append(type.name()).append(", ").append(bytes.length / 1024).append(" KB)")
+                .append("\n  • Was: ").append(before == null ? "no cover image" : before)
+                .append("\n  • Now: ").append(after == null ? "none — Discord did not keep it" : after);
+        if (after != null && after.equals(before)) {
+            // Same hash means identical bytes, which is worth saying out loud: the likeliest cause
+            // is uploading the file that was already there, and the call would otherwise read as a
+            // successful change.
+            result.append("\n  • Unchanged: that is the image the event already had.");
+        }
+        return result.toString();
+    }
+
+    /**
+     * Identify the format from the bytes, not the file name.
+     *
+     * <p>An extension is caller-supplied text. Discord rejects a mislabelled body, and JDA's
+     * {@code IconType.fromExtension} would happily build a PNG icon around a JPEG, producing a
+     * Discord-side error that blames the request rather than the file.
+     */
+    // Package-private so the format cases can be tested without a live event, matching
+    // resolveEndTime above.
+    static Icon.IconType coverType(byte[] bytes) {
+        if (bytes.length >= 8 && (bytes[0] & 0xFF) == 0x89 && bytes[1] == 'P' && bytes[2] == 'N' && bytes[3] == 'G'
+                && (bytes[4] & 0xFF) == 0x0D && (bytes[5] & 0xFF) == 0x0A
+                && (bytes[6] & 0xFF) == 0x1A && (bytes[7] & 0xFF) == 0x0A) {
+            return Icon.IconType.PNG;
+        }
+        if (bytes.length >= 3 && (bytes[0] & 0xFF) == 0xFF && (bytes[1] & 0xFF) == 0xD8 && (bytes[2] & 0xFF) == 0xFF) {
+            return Icon.IconType.JPEG;
+        }
+        // GIF is called out by name because it is the plausible mistake: Discord accepts animated
+        // avatars and banners elsewhere, but not on scheduled event covers.
+        if (bytes.length >= 3 && bytes[0] == 'G' && bytes[1] == 'I' && bytes[2] == 'F') {
+            throw new IllegalArgumentException(
+                    "Scheduled event covers cannot be GIFs — Discord does not animate them. "
+                            + "Supply a PNG or JPEG.");
+        }
+        throw new IllegalArgumentException(
+                "filePath is not a PNG or JPEG. Discord accepts only those for event covers.");
     }
 
     @Tool(name = "delete_guild_scheduled_event", description = "Permanently delete a scheduled event")

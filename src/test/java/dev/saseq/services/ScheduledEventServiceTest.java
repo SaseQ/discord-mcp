@@ -1,10 +1,16 @@
 package dev.saseq.services;
 
 import net.dv8tion.jda.api.JDA;
+import net.dv8tion.jda.api.entities.Icon;
 import net.dv8tion.jda.api.utils.data.DataObject;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 
@@ -142,6 +148,82 @@ class ScheduledEventServiceTest {
         // do not move the start, and Discord remains the backstop.
         assertThat(service.resolveEndTime(DataObject.empty(), null, "2026-08-05T22:00:00-05:00"))
                 .isEqualTo(OffsetDateTime.parse("2026-08-05T22:00:00-05:00"));
+    }
+
+    @Test
+    void aCoverImageIsIdentifiedFromItsBytesNotItsName() {
+        // The name is caller-supplied text. Trusting it means building a PNG icon around a JPEG
+        // body, which Discord rejects with an error that blames the request rather than the file.
+        assertThat(ScheduledEventService.coverType(png())).isEqualTo(Icon.IconType.PNG);
+        assertThat(ScheduledEventService.coverType(jpeg())).isEqualTo(Icon.IconType.JPEG);
+    }
+
+    @Test
+    void aGifCoverIsRefusedByName() {
+        // Discord animates avatars and banners but not event covers, so this is the plausible
+        // mistake rather than an exotic one, and the message has to say which.
+        assertThatThrownBy(() -> ScheduledEventService.coverType("GIF89a".getBytes(StandardCharsets.US_ASCII)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("cannot be GIFs");
+    }
+
+    @Test
+    void anythingElseIsRefusedBeforeItReachesDiscord() {
+        assertThatThrownBy(() -> ScheduledEventService.coverType("<svg/>".getBytes(StandardCharsets.US_ASCII)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("not a PNG or JPEG");
+        // A truncated body must not index past its end. Every prefix of a real PNG is a plausible
+        // partial download.
+        assertThatThrownBy(() -> ScheduledEventService.coverType(new byte[]{(byte) 0x89, 'P'}))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> ScheduledEventService.coverType(new byte[0]))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void settingACoverIsDisabledUntilAnUploadRootIsConfigured(@TempDir Path dir) throws IOException {
+        Path file = Files.write(dir.resolve("poster.png"), png());
+        service.coverFileRoot = "";
+
+        assertThatThrownBy(() -> service.setScheduledEventImage(null, "1", file.toString()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("DISCORD_MCP_FILE_ROOT");
+    }
+
+    @Test
+    void settingACoverRefusesAPathOutsideTheUploadRoot(@TempDir Path dir) throws IOException {
+        // Proves the guard is actually wired in, not merely imported. Without it this tool is a
+        // read of any file the process can open, on a service that holds a bot token.
+        Path root = Files.createDirectory(dir.resolve("uploads"));
+        Path outside = Files.write(dir.resolve("secret.png"), png());
+        service.coverFileRoot = root.toString();
+
+        assertThatThrownBy(() -> service.setScheduledEventImage(null, "1", outside.toString()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("outside the allowed upload directory");
+    }
+
+    @Test
+    void anOversizedCoverIsRefusedWithoutTouchingDiscord(@TempDir Path dir) throws IOException {
+        // The normal case, not an exotic one: the square poster masters this exists to publish run
+        // 6-17 MB before they are cropped.
+        Path root = Files.createDirectory(dir.resolve("uploads"));
+        byte[] big = new byte[10 * 1024 * 1024 + 1];
+        System.arraycopy(png(), 0, big, 0, png().length);
+        Path file = Files.write(root.resolve("master.png"), big);
+        service.coverFileRoot = root.toString();
+
+        assertThatThrownBy(() -> service.setScheduledEventImage(null, "1", file.toString()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("10 MB limit");
+    }
+
+    private static byte[] png() {
+        return new byte[]{(byte) 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0};
+    }
+
+    private static byte[] jpeg() {
+        return new byte[]{(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, (byte) 0xE0, 0, 0};
     }
 
     private DataObject event(String start, String end) {

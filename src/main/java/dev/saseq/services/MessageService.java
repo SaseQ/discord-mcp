@@ -183,26 +183,17 @@ public class MessageService {
     }
 
     private ResolvedFile readLocalFile(String filePath, String overrideName) {
-        Path path = resolveWithinAllowedRoot(filePath);
-        try {
-            // Bounded read: readAllBytes on an attacker-chosen path would OOM the
-            // JVM long before the size check below could reject it.
-            byte[] bytes;
-            try (InputStream in = Files.newInputStream(path, LinkOption.NOFOLLOW_LINKS)) {
-                bytes = in.readNBytes(MAX_UPLOAD_BYTES + 1);
-            }
-            if (bytes.length > MAX_UPLOAD_BYTES) {
-                throw new IllegalArgumentException("File exceeds the " + (MAX_UPLOAD_BYTES / (1024 * 1024)) + " MB limit.");
-            }
-            String name = overrideName != null ? overrideName : path.getFileName().toString();
-            return new ResolvedFile(bytes, name);
-        } catch (IOException e) {
-            throw new IllegalArgumentException("Failed to read file at filePath: " + e.getMessage());
-        }
+        // Confinement and the bounded read both live in LocalFileGuard so that the next tool to
+        // accept a local path cannot reintroduce either gap by writing its own version. See the
+        // class doc there for why that is not hypothetical.
+        Path path = LocalFileGuard.resolveWithinRoot(filePath, allowedRoot(), "filePath", "upload");
+        byte[] bytes = LocalFileGuard.readBounded(path, MAX_UPLOAD_BYTES, "File");
+        String name = overrideName != null ? overrideName : path.getFileName().toString();
+        return new ResolvedFile(bytes, name);
     }
 
     /**
-     * Confine local file reads to an allowlisted root.
+     * The resolved root local uploads may come from.
      *
      * <p>Without this, send_file with an absolute filePath will read anything the process can
      * read and post it to Discord. On a host where the service loads secrets from the
@@ -211,31 +202,7 @@ public class MessageService {
      *
      * <p>Unset means local filePath uploads are refused entirely. That is the safe default:
      * callers can still use fileUrl or base64 fileData.
-     *
-     * @return the fully resolved real path, which the caller must read instead of the
-     * caller-supplied one
      */
-    private Path resolveWithinAllowedRoot(String filePath) {
-        Path allowed = allowedRoot();
-        Path real;
-        try {
-            // toRealPath, not normalize: normalize is purely lexical, so a symlink
-            // inside the root pointing at /etc/shadow passes a prefix check on the
-            // normalized path. Both sides must be resolved for the comparison to mean
-            // anything, and the resolved path is what gets opened.
-            real = Paths.get(filePath).toRealPath();
-        } catch (IOException e) {
-            throw new IllegalArgumentException("File not found at filePath: " + filePath);
-        }
-        if (!real.startsWith(allowed) || real.equals(allowed)) {
-            throw new IllegalArgumentException("filePath is outside the allowed upload directory");
-        }
-        if (!Files.isRegularFile(real, LinkOption.NOFOLLOW_LINKS)) {
-            throw new IllegalArgumentException("filePath is not a regular file: " + filePath);
-        }
-        return real;
-    }
-
     private Path allowedRoot() {
         if (fileRoot == null || fileRoot.isBlank()) {
             throw new IllegalArgumentException(
@@ -305,22 +272,7 @@ public class MessageService {
     }
 
     private Path resolveRoot(String configured, String variableName) {
-        Path root;
-        try {
-            root = Paths.get(configured).toRealPath();
-        } catch (IOException e) {
-            throw new IllegalArgumentException(
-                    variableName + " does not exist or cannot be resolved: " + configured);
-        }
-        if (!Files.isDirectory(root)) {
-            throw new IllegalArgumentException(variableName + " is not a directory: " + configured);
-        }
-        // A filesystem root has no name components. Accepting "/" would confine
-        // nothing at all and silently re-open the whole vulnerability.
-        if (root.getNameCount() == 0) {
-            throw new IllegalArgumentException(variableName + " must not be a filesystem root");
-        }
-        return root;
+        return LocalFileGuard.resolveRoot(configured, variableName);
     }
 
     private byte[] downloadFile(String url) {

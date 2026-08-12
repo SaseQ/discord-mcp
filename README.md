@@ -154,10 +154,12 @@ Default MCP endpoint URL (HTTP profile): `http://localhost:8085/mcp`
 
 ### `DISCORD_MCP_FILE_ROOT`
 
-Optional. The single directory that `send_file` may read local `filePath` uploads from.
+Optional. The single directory that `send_file` and `set_guild_scheduled_event_image` may
+read local `filePath` uploads from.
 
 **Unset (default), local paths are refused.** `send_file` still works via `fileUrl` or
-base64 `fileData`. Set this only if you need local-path uploads, and point it at a
+base64 `fileData`; `set_guild_scheduled_event_image` has no other input and refuses
+outright. Set this only if you need local-path uploads, and point it at a
 directory that holds nothing but uploads:
 
 ```bash
@@ -510,8 +512,9 @@ mvn -Dtest=DiscordLiveIntegrationTest test
 #### Scheduled Events Management
 - [`create_guild_scheduled_event`](): Schedule a new event on the server (voice, stage, or external), optionally recurring
 - [`edit_guild_scheduled_event`](): Modify event details or change its status (start, complete, cancel), including the recurrence rule
+- [`set_guild_scheduled_event_image`](): Replace an event's cover image with a local PNG or JPEG (max 10MB, no animation). Requires [`DISCORD_MCP_FILE_ROOT`](#-security-notes). Separate from `edit_guild_scheduled_event` so a deployment can allow event edits without granting a local-file read
 - [`delete_guild_scheduled_event`](): Permanently delete a scheduled event
-- [`list_guild_scheduled_events`](): List all active and scheduled events on the server, showing which ones recur
+- [`list_guild_scheduled_events`](): List all active and scheduled events on the server, showing which ones recur and their cover image URL
 
 > **Recurring events.** JDA has no representation for Discord's `recurrence_rule`, so these tools
 > send that one field through a custom JDA route — same bot token, same rate limiter. Pass
