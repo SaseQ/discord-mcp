@@ -2,14 +2,18 @@ package dev.saseq.services;
 
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.entities.Message;
+import net.dv8tion.jda.api.entities.MessageEmbed;
 import net.dv8tion.jda.api.entities.channel.concrete.NewsChannel;
 import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
 import net.dv8tion.jda.api.entities.channel.concrete.ThreadChannel;
 import net.dv8tion.jda.api.entities.channel.middleman.MessageChannel;
 import net.dv8tion.jda.api.entities.emoji.Emoji;
+import net.dv8tion.jda.api.requests.restaction.MessageCreateAction;
+import net.dv8tion.jda.api.utils.FileUpload;
+import net.dv8tion.jda.api.utils.messages.MessageCreateBuilder;
+import net.dv8tion.jda.api.utils.messages.MessageEditBuilder;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -46,62 +50,132 @@ public class MessageService {
     }
 
     /**
-     * Sends a message to a specified Discord channel.
+     * Sends a message to a specified Discord channel, optionally as a reply, with embeds and/or files.
      *
-     * @param channelId The ID of the channel where the message will be sent.
-     * @param message   The content of the message to be sent.
+     * @param channelId         The ID of the channel where the message will be sent.
+     * @param message           The content of the message to be sent (optional when embeds or attachments are provided).
+     * @param replyToMessageId  Optional ID of the message to reply to (Discord message_reference).
+     * @param failIfNotExists   Optional true/false flag. When replying, defaults to true and maps
+     *                          to JDA failOnInvalidReply so a missing referenced message fails the send.
+     * @param embedsJson        Optional JSON array of Discord embed objects.
+     * @param attachmentPaths   Optional JSON array of absolute local file paths (or a single absolute path).
+     * @param attachmentsJson   Optional JSON array of { path } and/or { filename, base64 } / data-URI attachments.
      * @return A confirmation message with a link to the sent message.
      */
-    @Tool(name = "send_message", description = "Send a message to a specific channel")
+    @Tool(name = "send_message", description = "Send a message to a specific channel. Optionally reply with replyToMessageId, attach embeds via embedsJson, and/or upload files via attachmentPaths or attachmentsJson.")
     public String sendMessage(@ToolParam(description = "Discord channel ID") String channelId,
-                              @ToolParam(description = "Message content") String message) {
+                              @ToolParam(description = "Message content (optional when embedsJson or attachments are provided)", required = false) String message,
+                              @ToolParam(description = "Message ID to reply to (sets Discord message_reference)", required = false) String replyToMessageId,
+                              @ToolParam(description = "Fail if the referenced reply message does not exist (true/false, default true when replying)", required = false) String failIfNotExists,
+                              @ToolParam(description = "JSON array of Discord embed objects (title, titleUrl/url, description, color, footer, author, fields, thumbnailUrl, imageUrl, timestamp)", required = false) String embedsJson,
+                              @ToolParam(description = "JSON array of absolute local file paths to attach, or a single absolute path", required = false) String attachmentPaths,
+                              @ToolParam(description = "JSON array of attachments: { path } and/or { filename, base64 } or data-URI strings", required = false) String attachmentsJson) {
         if (channelId == null || channelId.isEmpty()) {
             throw new IllegalArgumentException("channelId cannot be null");
         }
-        if (message == null || message.isEmpty()) {
-            throw new IllegalArgumentException("message cannot be null");
-        }
 
-        MessageChannel channel = getMessageChannelById(channelId);
-        if (channel == null) {
-            throw new IllegalArgumentException("Channel not found by channelId");
+        List<MessageEmbed> embeds = EmbedJsonParser.parse(embedsJson);
+        List<FileUpload> uploads = AttachmentParser.parse(attachmentPaths, attachmentsJson);
+        try {
+            boolean hasContent = isProvided(message);
+            if (!hasContent && embeds.isEmpty() && uploads.isEmpty()) {
+                throw new IllegalArgumentException("message, embedsJson, or attachments are required");
+            }
+
+            MessageChannel channel = getMessageChannelById(channelId);
+            if (channel == null) {
+                throw new IllegalArgumentException("Channel not found by channelId");
+            }
+
+            MessageCreateBuilder builder = new MessageCreateBuilder();
+            if (hasContent) {
+                builder.setContent(message);
+            }
+            if (!embeds.isEmpty()) {
+                builder.setEmbeds(embeds);
+            }
+            if (!uploads.isEmpty()) {
+                builder.setFiles(uploads);
+            }
+
+            MessageCreateAction action = channel.sendMessage(builder.build());
+            if (replyToMessageId != null && !replyToMessageId.isBlank()) {
+                action.setMessageReference(replyToMessageId);
+                // JDA defaults failOnInvalidReply to false; when a reply is requested, default to true.
+                boolean failOnInvalidReply = failIfNotExists == null
+                        || failIfNotExists.isBlank()
+                        || Boolean.parseBoolean(failIfNotExists);
+                action.failOnInvalidReply(failOnInvalidReply);
+            }
+            Message sentMessage = action.complete();
+            return "Message sent successfully. Message link: " + sentMessage.getJumpUrl();
+        } finally {
+            AttachmentParser.closeQuietly(uploads);
         }
-        Message sentMessage = channel.sendMessage(message).complete();
-        return "Message sent successfully. Message link: " + sentMessage.getJumpUrl();
     }
 
     /**
      * Edits an existing message in a specified Discord channel.
      *
-     * @param channelId  The ID of the channel containing the message.
-     * @param messageId  The ID of the message to be edited.
-     * @param newMessage The new content for the message.
+     * @param channelId        The ID of the channel containing the message.
+     * @param messageId        The ID of the message to be edited.
+     * @param newMessage       The new content for the message (optional when embeds or attachments are provided).
+     * @param embedsJson       Optional JSON array of Discord embed objects. Replaces existing embeds when provided.
+     * @param attachmentPaths  Optional JSON array of absolute local file paths (or a single absolute path).
+     * @param attachmentsJson  Optional JSON array of { path } and/or { filename, base64 } / data-URI attachments.
      * @return A confirmation message with a link to the edited message.
      */
-    @Tool(name = "edit_message", description = "Edit a message from a specific channel")
+    @Tool(name = "edit_message", description = "Edit a message from a specific channel. Optional embedsJson replaces embeds; optional attachmentPaths/attachmentsJson replace files.")
     public String editMessage(@ToolParam(description = "Discord channel ID") String channelId,
                               @ToolParam(description = "Specific message ID") String messageId,
-                              @ToolParam(description = "New message content") String newMessage) {
+                              @ToolParam(description = "New message content (optional when embedsJson or attachments are provided)", required = false) String newMessage,
+                              @ToolParam(description = "JSON array of Discord embed objects (title, titleUrl/url, description, color, footer, author, fields, thumbnailUrl, imageUrl, timestamp)", required = false) String embedsJson,
+                              @ToolParam(description = "JSON array of absolute local file paths to attach, or a single absolute path. Replaces existing attachments.", required = false) String attachmentPaths,
+                              @ToolParam(description = "JSON array of attachments: { path } and/or { filename, base64 } or data-URI strings. Replaces existing attachments.", required = false) String attachmentsJson) {
         if (channelId == null || channelId.isEmpty()) {
             throw new IllegalArgumentException("channelId cannot be null");
         }
         if (messageId == null || messageId.isEmpty()) {
             throw new IllegalArgumentException("messageId cannot be null");
         }
-        if (newMessage == null || newMessage.isEmpty()) {
-            throw new IllegalArgumentException("newMessage cannot be null");
-        }
 
-        MessageChannel channel = getMessageChannelById(channelId);
-        if (channel == null) {
-            throw new IllegalArgumentException("Channel not found by channelId");
+        boolean hasEmbedsJson = isProvided(embedsJson);
+        boolean hasAttachmentParams = isProvided(attachmentPaths) || isProvided(attachmentsJson);
+        List<MessageEmbed> embeds = EmbedJsonParser.parse(embedsJson);
+        List<FileUpload> uploads = AttachmentParser.parse(attachmentPaths, attachmentsJson);
+        try {
+            boolean hasContent = isProvided(newMessage);
+            if (!hasContent && !hasEmbedsJson && !hasAttachmentParams) {
+                throw new IllegalArgumentException("newMessage, embedsJson, or attachments are required");
+            }
+            if (!hasContent && embeds.isEmpty() && uploads.isEmpty()) {
+                throw new IllegalArgumentException("newMessage, embedsJson, or attachments are required");
+            }
+
+            MessageChannel channel = getMessageChannelById(channelId);
+            if (channel == null) {
+                throw new IllegalArgumentException("Channel not found by channelId");
+            }
+            Message messageById = channel.retrieveMessageById(messageId).complete();
+            if (messageById == null) {
+                throw new IllegalArgumentException("Message not found by messageId");
+            }
+
+            MessageEditBuilder builder = new MessageEditBuilder();
+            if (newMessage != null) {
+                builder.setContent(newMessage.isBlank() ? "" : newMessage);
+            }
+            if (hasEmbedsJson) {
+                builder.setEmbeds(embeds);
+            }
+            if (hasAttachmentParams) {
+                builder.setAttachments(uploads);
+            }
+            Message editedMessage = messageById.editMessage(builder.build()).complete();
+            return "Message edited successfully. Message link: " + editedMessage.getJumpUrl();
+        } finally {
+            AttachmentParser.closeQuietly(uploads);
         }
-        Message messageById = channel.retrieveMessageById(messageId).complete();
-        if (messageById == null) {
-            throw new IllegalArgumentException("Message not found by messageId");
-        }
-        Message editedMessage = messageById.editMessage(newMessage).complete();
-        return "Message edited successfully. Message link: " + editedMessage.getJumpUrl();
     }
 
     /**
@@ -143,7 +217,7 @@ public class MessageService {
      * @param around    Optional message ID to fetch messages around this message.
      * @return A formatted string containing the retrieved messages.
      */
-    @Tool(name = "read_messages", description = "Read message history from a specific channel, optionally paginated with before/after/around")
+    @Tool(name = "read_messages", description = "Read message history from a specific channel, optionally paginated with before/after/around. Each line includes authorId (Discord snowflake).")
     public String readMessages(@ToolParam(description = "Discord channel ID") String channelId,
                                @ToolParam(description = "Number of messages to retrieve (1-100)", required = false) String count,
                                @ToolParam(description = "Message ID to fetch messages before this message", required = false) String before,
@@ -357,12 +431,13 @@ public class MessageService {
         return messages.stream()
                 .map(m -> {
                     String authorName = m.getAuthor().getName();
+                    String authorId = m.getAuthor().getId();
                     String timestamp = m.getTimeCreated().toString();
                     String content = m.getContentDisplay();
                     String msgId = m.getId();
 
                     StringBuilder sb = new StringBuilder();
-                    sb.append(String.format("- (ID: %s) **[%s]** `%s`: ```%s```", msgId, authorName, timestamp, content));
+                    sb.append(String.format("- (ID: %s) **[%s]** (authorId: %s) `%s`: ```%s```", msgId, authorName, authorId, timestamp, content));
 
                     List<Message.Attachment> attachments = m.getAttachments();
                     if (!attachments.isEmpty()) {

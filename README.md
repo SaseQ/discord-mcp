@@ -38,6 +38,7 @@ export SPRING_PROFILES_ACTIVE=http
 
 > [!IMPORTANT]
 > Instructions for creating a Discord bot and retrieving its token can be found [here](https://discordjs.guide/legacy/preparations/app-setup).
+> Enable the privileged **Server Members Intent** on the bot so member lookup tools can load the full roster (`get_user_id_by_name`, `list_guild_members`). JDA already requests `GUILD_MEMBERS`.
 
 > [!TIP]
 > The `DISCORD_GUILD_ID` env variable is optional.
@@ -316,19 +317,58 @@ Remote MCP Connector:
 - [`get_server_info`](): Get detailed discord server information
 
 #### User Management
-- [`get_user_id_by_name`](): Get a Discord user's ID by username in a guild for ping usage `<@id>`
+- [`get_user_id_by_name`](): Get a Discord user's ID by username in a guild for ping usage `<@id>`. Loads/retrieves members instead of a cold cache. Supports optional `username#discriminator` and errors on ambiguous matches. Also matches nickname/display name, and a unique username prefix (e.g. `abnegate` → `abnegate.`).
+- [`list_guild_members`](): List members in a guild with `username`, `nickname` (if any), `displayName`, and `id` (and `bot=true` for bots). Loads the roster instead of a cold cache. Intended for small servers.
 - [`send_private_message`](): Send a private message to a specific user
 - [`edit_private_message`](): Edit a private message from a specific user
 - [`delete_private_message`](): Delete a private message from a specific user
-- [`read_private_messages`](): Read private message history from a specific user (includes attachment metadata, supports `count` 1-100 and optional cursor: `before` or `after` or `around`)
+- [`read_private_messages`](): Read private message history from a specific user (includes attachment metadata and `authorId` Discord snowflake, supports `count` 1-100 and optional cursor: `before` or `after` or `around`)
 
 #### Message Management
-- [`send_message`](): Send a message to a specific channel
-- [`edit_message`](): Edit a message from a specific channel
+- [`send_message`](): Send a message to a specific channel. Optional `replyToMessageId` sends a true Discord reply (`message_reference`). Optional `failIfNotExists` (`true`/`false`, default `true` when replying) fails if the referenced message is missing. Optional `embedsJson` attaches rich embeds. Optional `attachmentPaths` / `attachmentsJson` upload files on the same message. `message` may be omitted when embeds or attachments are provided.
+- [`edit_message`](): Edit a message from a specific channel. Accepts the same optional `embedsJson`, `attachmentPaths`, and `attachmentsJson` as `send_message`. `newMessage` may be omitted when embeds or attachments are provided. Providing attachments replaces the message's existing files.
 - [`delete_message`](): Delete a message from a specific channel
-- [`read_messages`](): Read message history from a specific channel (includes attachment metadata, supports `count` 1-100 and optional cursor: `before` or `after` or `around`)
+- [`read_messages`](): Read message history from a specific channel (includes attachment metadata and `authorId` Discord snowflake on each line, supports `count` 1-100 and optional cursor: `before` or `after` or `around`)
 - [`add_reaction`](): Add a reaction (emoji) to a specific message
 - [`remove_reaction`](): Remove a specified reaction (emoji) from a message
+
+**Embeds (`embedsJson`)** — JSON array of embed objects (max 10). Each object may include `title`, `titleUrl` or `url` (clickable title), `description`, `color` (RGB int or hex like `#5865F2` / `0x5865F2`), `footer` (string or `{ text, iconUrl? }`), `author` (`{ name, url?, iconUrl? }`), `fields` (`[{ name, value, inline? }]`), `thumbnailUrl`, `imageUrl`, and `timestamp` (ISO-8601).
+
+GitHub-style release card:
+
+```json
+[
+  {
+    "author": {
+      "name": "my-org/my-app",
+      "url": "https://github.com/my-org/my-app",
+      "iconUrl": "https://github.com/my-org.png"
+    },
+    "title": "v1.2.0",
+    "titleUrl": "https://github.com/my-org/my-app/releases/tag/v1.2.0",
+    "description": "## What's Changed\n* Add Discord embeds by @alice in https://github.com/my-org/my-app/pull/42\n* Fix reply handling by @bob in https://github.com/my-org/my-app/pull/41",
+    "color": "#5865F2",
+    "footer": "Full changelog: https://github.com/my-org/my-app/compare/v1.1.0...v1.2.0"
+  }
+]
+```
+
+**Attachments** — up to 10 files per message. This server rejects files larger than 25 MB before upload; Discord's default bot limit is 10 MB per file (higher on boosted servers). Prefer `attachmentPaths` for local QA screenshots; `attachmentsJson` is a fallback for `{ path }` and `{ filename, base64 }` / data-URI payloads.
+
+Reply + release embed + one PNG:
+
+```json
+{
+  "channelId": "123456789012345678",
+  "replyToMessageId": "987654321098765432",
+  "embedsJson": "[{\"title\":\"v1.2.0\",\"titleUrl\":\"https://github.com/my-org/my-app/releases/tag/v1.2.0\",\"description\":\"## What's Changed\\n* Fix mobile table overflow\",\"color\":\"#5865F2\",\"footer\":\"QA visual check\"}]",
+  "attachmentPaths": "[\"/var/qa/screenshots/mobile-table-overflow.png\"]"
+}
+```
+
+#### Thread Management
+- [`list_active_threads`](): List all active threads in the server
+- [`create_thread_from_message`](): Create a public thread from an existing message (`channelId`, `messageId`, `name`, optional `autoArchiveDuration` minutes: `60`, `1440`, `4320`, or `10080`). Returns the new thread `channelId` so you can `send_message` into it.
 
 #### Channel Management
 - [`create_text_channel`](): Create a new text channel

@@ -10,7 +10,11 @@ import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
@@ -33,19 +37,7 @@ public class UserService {
         return guildId;
     }
 
-    /**
-     * Public tool to retrieve a Discord user's ID by their username (optionally with discriminator) in a guild.
-     * @param username Username (optionally in the format username#discriminator)
-     * @param guildId Optional guild/server ID; uses default if not provided
-     * @return User ID string if found, or error message
-     */
-    @Tool(name = "get_user_id_by_name", description = "Get a Discord user's ID by username in a guild for ping usage <@id>.")
-    public String getUserIdByName(
-            @ToolParam(description = "Discord username (optionally username#discriminator)") String username,
-            @ToolParam(description = "Discord server ID", required = false) String guildId) {
-        if (username == null || username.isEmpty()) {
-            throw new IllegalArgumentException("username cannot be null");
-        }
+    private Guild requireGuild(String guildId) {
         guildId = resolveGuildId(guildId);
         if (guildId == null || guildId.isEmpty()) {
             throw new IllegalArgumentException("guildId cannot be null");
@@ -54,20 +46,180 @@ public class UserService {
         if (guild == null) {
             throw new IllegalArgumentException("Discord server not found by guildId");
         }
-        String name = username;
+        return guild;
+    }
+
+    /**
+     * Resolve members by username (and optional discriminator) using loadMembers plus
+     * retrieveMembersByPrefix, not a cold cache-only lookup.
+     */
+    private List<Member> resolveMembersByName(Guild guild, String name, String discriminator) {
+        Map<String, Member> byId = new LinkedHashMap<>();
+        for (Member member : loadGuildMembers(guild)) {
+            byId.put(member.getId(), member);
+        }
+
+        List<Member> matches = filterExactMembers(byId.values(), name, discriminator);
+        if (!matches.isEmpty()) {
+            return matches;
+        }
+
+        for (Member member : retrieveMembersByPrefixSafe(guild, name)) {
+            byId.putIfAbsent(member.getId(), member);
+        }
+        matches = filterExactMembers(byId.values(), name, discriminator);
+        if (!matches.isEmpty()) {
+            return matches;
+        }
+
+        // Unique prefix fallback (e.g. "abnegate" -> "abnegate.") when discriminator is omitted.
+        if (discriminator == null) {
+            return filterPrefixMembers(byId.values(), name);
+        }
+        return List.of();
+    }
+
+    private List<Member> loadGuildMembers(Guild guild) {
+        try {
+            List<Member> members = guild.loadMembers().get();
+            if (members != null && !members.isEmpty()) {
+                return members;
+            }
+        } catch (RuntimeException ignored) {
+            // Fall back to whatever is already cached, then prefix-search in the caller.
+        }
+        return new ArrayList<>(guild.getMembers());
+    }
+
+    private List<Member> retrieveMembersByPrefixSafe(Guild guild, String name) {
+        try {
+            List<Member> members = guild.retrieveMembersByPrefix(name, 100).get();
+            return members != null ? members : List.of();
+        } catch (RuntimeException ignored) {
+            return List.of();
+        }
+    }
+
+    private Member retrieveMemberByIdSafe(Guild guild, String userId) {
+        try {
+            return guild.retrieveMemberById(userId).complete();
+        } catch (RuntimeException ignored) {
+            return null;
+        }
+    }
+
+    private List<Member> filterExactMembers(Iterable<Member> members, String name, String discriminator) {
+        List<Member> usernameMatches = new ArrayList<>();
+        List<Member> displayMatches = new ArrayList<>();
+        for (Member member : members) {
+            if (!matchesDiscriminator(member, discriminator)) {
+                continue;
+            }
+            if (equalsIgnoreCase(member.getUser().getName(), name)) {
+                usernameMatches.add(member);
+            } else if (matchesDisplayName(member, name)) {
+                displayMatches.add(member);
+            }
+        }
+        return usernameMatches.isEmpty() ? displayMatches : usernameMatches;
+    }
+
+    private List<Member> filterPrefixMembers(Iterable<Member> members, String name) {
+        List<Member> prefixMatches = new ArrayList<>();
+        for (Member member : members) {
+            if (startsWithIgnoreCase(member.getUser().getName(), name)
+                    || startsWithIgnoreCase(member.getUser().getGlobalName(), name)
+                    || startsWithIgnoreCase(member.getNickname(), name)
+                    || startsWithIgnoreCase(member.getEffectiveName(), name)) {
+                prefixMatches.add(member);
+            }
+        }
+        return prefixMatches;
+    }
+
+    private boolean matchesDisplayName(Member member, String name) {
+        return equalsIgnoreCase(member.getUser().getGlobalName(), name)
+                || equalsIgnoreCase(member.getNickname(), name)
+                || equalsIgnoreCase(member.getEffectiveName(), name);
+    }
+
+    private boolean matchesDiscriminator(Member member, String discriminator) {
+        return discriminator == null || discriminator.equals(member.getUser().getDiscriminator());
+    }
+
+    private boolean equalsIgnoreCase(String value, String expected) {
+        return value != null && value.equalsIgnoreCase(expected);
+    }
+
+    private boolean startsWithIgnoreCase(String value, String prefix) {
+        return value != null && value.toLowerCase(Locale.ROOT).startsWith(prefix.toLowerCase(Locale.ROOT));
+    }
+
+    private boolean isSnowflake(String value) {
+        if (value.length() < 17 || value.length() > 20) {
+            return false;
+        }
+        for (int i = 0; i < value.length(); i++) {
+            if (!Character.isDigit(value.charAt(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private String formatMemberLine(Member member) {
+        User user = member.getUser();
+        StringBuilder line = new StringBuilder();
+        line.append("- username=`").append(user.getName()).append("`");
+        if (member.getNickname() != null && !member.getNickname().isBlank()) {
+            line.append(" nickname=`").append(member.getNickname()).append("`");
+        }
+        line.append(" displayName=`").append(member.getEffectiveName()).append("`");
+        line.append(" id=`").append(user.getId()).append("`");
+        if (user.isBot()) {
+            line.append(" bot=true");
+        }
+        return line.toString();
+    }
+
+    /**
+     * Public tool to retrieve a Discord user's ID by their username (optionally with discriminator) in a guild.
+     * Loads/retrieves members instead of relying on a cold member cache.
+     *
+     * @param username Username (optionally in the format username#discriminator)
+     * @param guildId Optional guild/server ID; uses default if not provided
+     * @return User ID string if found
+     */
+    @Tool(name = "get_user_id_by_name", description = "Get a Discord user's ID by username in a guild for ping usage <@id>. Loads/retrieves members rather than using a cold cache.")
+    public String getUserIdByName(
+            @ToolParam(description = "Discord username (optionally username#discriminator)") String username,
+            @ToolParam(description = "Discord server ID", required = false) String guildId) {
+        if (username == null || username.isBlank()) {
+            throw new IllegalArgumentException("username cannot be null");
+        }
+        Guild guild = requireGuild(guildId);
+        String query = username.trim();
+
+        if (isSnowflake(query)) {
+            Member byId = retrieveMemberByIdSafe(guild, query);
+            if (byId != null) {
+                return byId.getUser().getId();
+            }
+            throw new IllegalArgumentException("No user found with username " + username);
+        }
+
+        String name = query;
         String discriminatorLocal = null;
-        if (username.contains("#")) {
-            int idx = username.lastIndexOf('#');
-            name = username.substring(0, idx);
-            discriminatorLocal = username.substring(idx + 1);
+        if (query.contains("#")) {
+            int idx = query.lastIndexOf('#');
+            name = query.substring(0, idx);
+            discriminatorLocal = query.substring(idx + 1);
         }
-        List<Member> members = guild.getMemberCache().getElementsByUsername(name, true);
-        if (discriminatorLocal != null) {
-            final String finalDiscriminator = discriminatorLocal;
-            members = members.stream()
-                    .filter(m -> m.getUser().getDiscriminator().equals(finalDiscriminator))
-                    .toList();
+        if (name.isBlank()) {
+            throw new IllegalArgumentException("username cannot be null");
         }
+
+        List<Member> members = resolveMembersByName(guild, name, discriminatorLocal);
         if (members.isEmpty()) {
             throw new IllegalArgumentException("No user found with username " + username);
         }
@@ -78,6 +230,35 @@ public class UserService {
             throw new IllegalArgumentException("Multiple users found with username '" + username + "'. List: " + userList + ". Please specify the full username#discriminator.");
         }
         return members.get(0).getUser().getId();
+    }
+
+    /**
+     * Lists members of a guild with username, nickname, display name, and user ID.
+     * Loads the full member roster rather than reading a cold cache.
+     *
+     * @param guildId Optional guild/server ID; uses default if not provided
+     * @return A formatted member list
+     */
+    @Tool(name = "list_guild_members", description = "List guild members with username, nickname (if any), display name, and user ID. Loads members rather than using a cold cache.")
+    public String listGuildMembers(
+            @ToolParam(description = "Discord server ID", required = false) String guildId) {
+        Guild guild = requireGuild(guildId);
+        List<Member> members = loadGuildMembers(guild).stream()
+                .sorted((a, b) -> a.getUser().getName().compareToIgnoreCase(b.getUser().getName()))
+                .toList();
+        if (members.isEmpty()) {
+            return "No members found in the server.";
+        }
+
+        String body = members.stream()
+                .map(this::formatMemberLine)
+                .collect(Collectors.joining("\n"));
+        int advertisedCount = guild.getMemberCount();
+        if (advertisedCount > members.size()) {
+            return "**Retrieved " + members.size() + " of " + advertisedCount
+                    + " members (roster may be incomplete; enable Server Members Intent):**\n" + body;
+        }
+        return "**Retrieved " + members.size() + " members:**\n" + body;
     }
 
     /**
@@ -178,7 +359,7 @@ public class UserService {
      * @param around  Optional message ID to fetch messages around this message.
      * @return A formatted string containing the retrieved private messages.
      */
-    @Tool(name = "read_private_messages", description = "Read private message history from a specific user, optionally paginated with before/after/around")
+    @Tool(name = "read_private_messages", description = "Read private message history from a specific user, optionally paginated with before/after/around. Each line includes authorId (Discord snowflake).")
     public String readPrivateMessages(@ToolParam(description = "Discord user ID") String userId,
                                       @ToolParam(description = "Number of messages to retrieve (1-100)", required = false) String count,
                                       @ToolParam(description = "Message ID to fetch messages before this message", required = false) String before,
@@ -263,12 +444,13 @@ public class UserService {
         return messages.stream()
                 .map(m -> {
                     String authorName = m.getAuthor().getName();
+                    String authorId = m.getAuthor().getId();
                     String timestamp = m.getTimeCreated().toString();
                     String content = m.getContentDisplay();
                     String msgId = m.getId();
 
                     StringBuilder sb = new StringBuilder();
-                    sb.append(String.format("- (ID: %s) **[%s]** `%s`: ```%s```", msgId, authorName, timestamp, content));
+                    sb.append(String.format("- (ID: %s) **[%s]** (authorId: %s) `%s`: ```%s```", msgId, authorName, authorId, timestamp, content));
 
                     List<Message.Attachment> attachments = m.getAttachments();
                     if (!attachments.isEmpty()) {
