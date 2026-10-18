@@ -357,12 +357,20 @@ public class MessageService {
         return messages.stream()
                 .map(m -> {
                     String authorName = m.getAuthor().getName();
+                    String authorId = m.getAuthor().getId();
                     String timestamp = m.getTimeCreated().toString();
                     String content = m.getContentDisplay();
                     String msgId = m.getId();
 
                     StringBuilder sb = new StringBuilder();
-                    sb.append(String.format("- (ID: %s) **[%s]** `%s`: ```%s```", msgId, authorName, timestamp, content));
+                    sb.append(String.format(
+                            "- (ID: %s) **[%s]** (Author ID: %s) `%s`: ```%s```",
+                            msgId,
+                            authorName,
+                            authorId,
+                            timestamp,
+                            content
+                    ));
 
                     List<Message.Attachment> attachments = m.getAttachments();
                     if (!attachments.isEmpty()) {
