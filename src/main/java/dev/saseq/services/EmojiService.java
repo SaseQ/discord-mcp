@@ -14,7 +14,6 @@ import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.InetAddress;
 import java.net.URI;
-import java.net.URLConnection;
 import java.net.UnknownHostException;
 import java.util.Arrays;
 import java.util.Base64;
@@ -23,6 +22,10 @@ import java.util.stream.Collectors;
 
 @Service
 public class EmojiService {
+
+    private static final int MAX_EMOJI_BYTES = 256 * 1024;
+    private static final int CONNECT_TIMEOUT_MS = 5000;
+    private static final int READ_TIMEOUT_MS = 10000;
 
     private final JDA jda;
 
@@ -112,7 +115,7 @@ public class EmojiService {
 
         byte[] imageBytes = resolveImage(image, imageUrl);
 
-        if (imageBytes.length > 256 * 1024) {
+        if (imageBytes.length > MAX_EMOJI_BYTES) {
             throw new IllegalArgumentException("Image exceeds 256 KB limit (" + (imageBytes.length / 1024) + " KB). Please compress or resize the image.");
         }
 
@@ -208,11 +211,6 @@ public class EmojiService {
         return hasUrl ? downloadImage(imageUrl) : decodeDataUri(image);
     }
 
-    // Discord caps custom emoji uploads at 256 KiB; allow some headroom but bound the read.
-    private static final int MAX_IMAGE_BYTES = 8 * 1024 * 1024;
-    private static final int CONNECT_TIMEOUT_MS = 5000;
-    private static final int READ_TIMEOUT_MS = 10000;
-
     private byte[] downloadImage(String url) {
         URI uri;
         try {
@@ -233,17 +231,19 @@ public class EmojiService {
         assertHostIsPublic(host);
 
         try {
-            URLConnection conn = uri.toURL().openConnection();
+            HttpURLConnection conn = (HttpURLConnection) uri.toURL().openConnection();
             conn.setConnectTimeout(CONNECT_TIMEOUT_MS);
             conn.setReadTimeout(READ_TIMEOUT_MS);
-            if (conn instanceof HttpURLConnection httpConn) {
-                // Don't follow redirects: a 30x could bounce us to a blocked address after the check.
-                httpConn.setInstanceFollowRedirects(false);
+            // Don't follow redirects: a 30x could bounce us to a blocked address after the check.
+            conn.setInstanceFollowRedirects(false);
+            int status = conn.getResponseCode();
+            if (status != HttpURLConnection.HTTP_OK) {
+                throw new IllegalArgumentException("Image URL returned HTTP " + status + ". Provide a direct image link (redirects are not followed).");
             }
             try (InputStream in = conn.getInputStream()) {
-                byte[] data = in.readNBytes(MAX_IMAGE_BYTES + 1);
-                if (data.length > MAX_IMAGE_BYTES) {
-                    throw new IllegalArgumentException("Image exceeds the maximum allowed size");
+                byte[] data = in.readNBytes(MAX_EMOJI_BYTES + 1);
+                if (data.length > MAX_EMOJI_BYTES) {
+                    throw new IllegalArgumentException("Image exceeds 256 KB limit. Please compress or resize the image.");
                 }
                 return data;
             }
