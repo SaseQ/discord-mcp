@@ -238,7 +238,8 @@ public class EmojiService {
             conn.setInstanceFollowRedirects(false);
             int status = conn.getResponseCode();
             if (status != HttpURLConnection.HTTP_OK) {
-                throw new IllegalArgumentException("Image URL returned HTTP " + status + ". Provide a direct image link (redirects are not followed).");
+                String hint = status / 100 == 3 ? " Provide a direct image link (redirects are not followed)." : "";
+                throw new IllegalArgumentException("Image URL returned HTTP " + status + "." + hint);
             }
             try (InputStream in = conn.getInputStream()) {
                 byte[] data = in.readNBytes(MAX_EMOJI_BYTES + 1);
