@@ -54,7 +54,7 @@ public class UserService {
      * @param guildId Optional guild/server ID; uses default if not provided
      * @return User ID string if found, or error message
      */
-    @Tool(name = "get_user_id_by_name", description = "Get a Discord user's ID by username in a guild for ping usage <@id>.")
+    @Tool(name = "get_user_id_by_name", description = "Get a Discord user's ID by exact username in a guild for ping usage <@id>. To match by nickname or global name, use search_members.")
     public String getUserIdByName(
             @ToolParam(description = "Discord username (optionally username#discriminator)") String username,
             @ToolParam(description = "Discord server ID", required = false) String guildId) {
@@ -353,13 +353,11 @@ public class UserService {
     }
 
     private User getUserById(String userId) {
-        for (Guild guild : jda.getGuilds()) {
-            Member member = retrieveMemberById(guild, userId, true);
-            if (member != null) {
-                return member.getUser();
-            }
+        try {
+            return jda.retrieveUserById(userId).complete();
+        } catch (RuntimeException ex) {
+            return null;
         }
-        return null;
     }
 
     private Member retrieveMemberById(Guild guild, String userId, boolean refresh) {
@@ -394,8 +392,7 @@ public class UserService {
 
     private boolean memberMatches(Member member, String query) {
         String normalizedQuery = query.toLowerCase(Locale.ROOT);
-        return containsIgnoreCase(member.getId(), normalizedQuery)
-                || containsIgnoreCase(member.getUser().getName(), normalizedQuery)
+        return containsIgnoreCase(member.getUser().getName(), normalizedQuery)
                 || containsIgnoreCase(member.getUser().getGlobalName(), normalizedQuery)
                 || containsIgnoreCase(member.getNickname(), normalizedQuery)
                 || containsIgnoreCase(member.getEffectiveName(), normalizedQuery);
