@@ -23,7 +23,8 @@ RUN addgroup -S app && adduser -S -G app app \
     && chown -R app:app /app/target
 USER app
 
-# Note: this image targets the default stdio transport (no listening port), so the HTTP
-# port/healthcheck have been removed. For HTTP mode, re-add EXPOSE 8085 and a healthcheck.
+EXPOSE 8085
+
+# No HEALTHCHECK here: stdio mode has no HTTP endpoint. docker-compose.yml defines one for HTTP mode.
 
 ENTRYPOINT ["java", "-jar", "app.jar"]
