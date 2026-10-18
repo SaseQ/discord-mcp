@@ -62,7 +62,7 @@ public class WebhookService {
         if (webhook == null) {
             throw new IllegalArgumentException("Webhook not found by webhookId");
         }
-        webhook.delete().queue();
+        webhook.delete().complete();
         return "Deleted " + webhook.getName() + " webhook";
     }
 
