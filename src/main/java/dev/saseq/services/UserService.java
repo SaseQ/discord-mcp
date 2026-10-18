@@ -266,7 +266,7 @@ public class UserService {
         if (messageById == null) {
             throw new IllegalArgumentException("Message not found by messageId");
         }
-        messageById.delete().queue();
+        messageById.delete().complete();
         return "Message deleted successfully";
     }
 

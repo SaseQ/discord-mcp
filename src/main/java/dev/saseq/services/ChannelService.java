@@ -48,7 +48,7 @@ public class ChannelService {
         if (channel == null) throw new IllegalArgumentException("Channel not found by channelId");
         var action = channel.delete();
         if (reason != null && !reason.isEmpty()) action.reason(reason);
-        action.queue();
+        action.complete();
         return "Deleted " + channel.getType().name() + " channel: " + channel.getName();
     }
 

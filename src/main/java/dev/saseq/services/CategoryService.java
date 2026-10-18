@@ -83,7 +83,7 @@ public class CategoryService {
         if (category == null) {
             throw new IllegalArgumentException("Category not found by categoryId");
         }
-        category.delete().queue();
+        category.delete().complete();
         return "Deleted category: " + category.getName();
     }
 

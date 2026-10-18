@@ -129,7 +129,7 @@ public class MessageService {
         if (messageById == null) {
             throw new IllegalArgumentException("Message not found by messageId");
         }
-        messageById.delete().queue();
+        messageById.delete().complete();
         return "Message deleted successfully";
     }
 
@@ -244,7 +244,7 @@ public class MessageService {
         if (message == null) {
             throw new IllegalArgumentException("Message not found by messageId");
         }
-        message.addReaction(Emoji.fromUnicode(emoji)).queue();
+        message.addReaction(Emoji.fromUnicode(emoji)).complete();
         return "Added reaction successfully. Message link: " + message.getJumpUrl();
     }
 
@@ -278,7 +278,7 @@ public class MessageService {
         if (message == null) {
             throw new IllegalArgumentException("Message not found by messageId");
         }
-        message.removeReaction(Emoji.fromUnicode(emoji)).queue();
+        message.removeReaction(Emoji.fromUnicode(emoji)).complete();
         return "Removed reaction successfully. Message link: " + message.getJumpUrl();
     }
 

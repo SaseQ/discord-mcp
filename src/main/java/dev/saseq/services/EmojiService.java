@@ -10,7 +10,11 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.InetAddress;
 import java.net.URI;
+import java.net.UnknownHostException;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
@@ -18,6 +22,10 @@ import java.util.stream.Collectors;
 
 @Service
 public class EmojiService {
+
+    private static final int MAX_EMOJI_BYTES = 256 * 1024;
+    private static final int CONNECT_TIMEOUT_MS = 5000;
+    private static final int READ_TIMEOUT_MS = 10000;
 
     private final JDA jda;
 
@@ -107,7 +115,7 @@ public class EmojiService {
 
         byte[] imageBytes = resolveImage(image, imageUrl);
 
-        if (imageBytes.length > 256 * 1024) {
+        if (imageBytes.length > MAX_EMOJI_BYTES) {
             throw new IllegalArgumentException("Image exceeds 256 KB limit (" + (imageBytes.length / 1024) + " KB). Please compress or resize the image.");
         }
 
@@ -204,11 +212,67 @@ public class EmojiService {
     }
 
     private byte[] downloadImage(String url) {
+        URI uri;
         try {
-            return URI.create(url).toURL().openStream().readAllBytes();
+            uri = URI.create(url);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Invalid image URL: " + e.getMessage());
+        }
+
+        String scheme = uri.getScheme();
+        if (scheme == null || !scheme.equalsIgnoreCase("https")) {
+            throw new IllegalArgumentException("Image URL must use the https scheme");
+        }
+        String host = uri.getHost();
+        if (host == null || host.isEmpty()) {
+            throw new IllegalArgumentException("Image URL must include a host");
+        }
+        // SSRF guard: reject hosts that resolve to internal/metadata addresses.
+        assertHostIsPublic(host);
+
+        try {
+            HttpURLConnection conn = (HttpURLConnection) uri.toURL().openConnection();
+            conn.setConnectTimeout(CONNECT_TIMEOUT_MS);
+            conn.setReadTimeout(READ_TIMEOUT_MS);
+            // Don't follow redirects: a 30x could bounce us to a blocked address after the check.
+            conn.setInstanceFollowRedirects(false);
+            int status = conn.getResponseCode();
+            if (status != HttpURLConnection.HTTP_OK) {
+                String hint = status / 100 == 3 ? " Provide a direct image link (redirects are not followed)." : "";
+                throw new IllegalArgumentException("Image URL returned HTTP " + status + "." + hint);
+            }
+            try (InputStream in = conn.getInputStream()) {
+                byte[] data = in.readNBytes(MAX_EMOJI_BYTES + 1);
+                if (data.length > MAX_EMOJI_BYTES) {
+                    throw new IllegalArgumentException("Image exceeds 256 KB limit. Please compress or resize the image.");
+                }
+                return data;
+            }
         } catch (IOException e) {
             throw new IllegalArgumentException("Failed to download image from URL: " + e.getMessage());
         }
+    }
+
+    private void assertHostIsPublic(String host) {
+        InetAddress[] addresses;
+        try {
+            addresses = InetAddress.getAllByName(host);
+        } catch (UnknownHostException e) {
+            throw new IllegalArgumentException("Cannot resolve image host: " + host);
+        }
+        for (InetAddress addr : addresses) {
+            if (addr.isLoopbackAddress() || addr.isAnyLocalAddress()
+                    || addr.isLinkLocalAddress() || addr.isSiteLocalAddress()
+                    || addr.isMulticastAddress() || isUniqueLocalIpv6(addr)) {
+                throw new IllegalArgumentException("Image URL resolves to a disallowed (internal) address");
+            }
+        }
+    }
+
+    // IPv6 unique-local range fc00::/7 is not covered by isSiteLocalAddress().
+    private boolean isUniqueLocalIpv6(InetAddress addr) {
+        byte[] bytes = addr.getAddress();
+        return bytes.length == 16 && (bytes[0] & 0xFE) == 0xFC;
     }
 
     private byte[] decodeDataUri(String dataUri) {
