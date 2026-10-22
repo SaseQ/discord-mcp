@@ -2,6 +2,7 @@ package dev.saseq.services;
 
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.entities.Message;
+import net.dv8tion.jda.api.entities.MessageHistory;
 import net.dv8tion.jda.api.entities.channel.concrete.NewsChannel;
 import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
 import net.dv8tion.jda.api.entities.channel.concrete.ThreadChannel;
@@ -12,7 +13,9 @@ import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 @Service
 public class MessageService {
@@ -212,6 +215,82 @@ public class MessageService {
 
     private boolean isProvided(String value) {
         return value != null && !value.isBlank();
+    }
+
+    /**
+     * Searches the most recent messages of a channel or thread for a piece of text.
+     * Discord offers no bot-accessible per-channel search, so this scans the history newest to oldest,
+     * 100 messages per request, up to {@code maxMessages}.
+     *
+     * @param channelId   The ID of the channel or thread to search in.
+     * @param searchText  The text to search for (case-insensitive, matched against the displayed message content).
+     * @param maxMessages Optional maximum number of recent messages to scan (1-1000, default 500).
+     * @return A formatted string with the matching messages and how many messages were scanned.
+     */
+    @Tool(name = "search_messages", description = "Search the most recent messages of a channel or thread for text (case-insensitive). Scans up to maxMessages messages from newest to oldest (default 500, max 1000); it is not a server-side search")
+    public String searchMessages(@ToolParam(description = "Discord channel or thread ID") String channelId,
+                                 @ToolParam(description = "Text to search for (case-insensitive)") String searchText,
+                                 @ToolParam(description = "Maximum number of recent messages to scan (1-1000, default 500)", required = false) String maxMessages) {
+        if (channelId == null || channelId.isEmpty()) {
+            throw new IllegalArgumentException("channelId cannot be null");
+        }
+        if (searchText == null || searchText.isBlank()) {
+            throw new IllegalArgumentException("searchText cannot be null");
+        }
+        int maxToScan = parseScanLimit(maxMessages);
+
+        MessageChannel channel = getMessageChannelById(channelId);
+        if (channel == null) {
+            throw new IllegalArgumentException("Channel not found by channelId");
+        }
+
+        String needle = searchText.toLowerCase(Locale.ROOT);
+        MessageHistory history = channel.getHistory();
+        List<Message> matches = new ArrayList<>();
+        int scanned = 0;
+        boolean reachedStart = false;
+        while (scanned < maxToScan) {
+            // Each retrievePast call continues from the oldest message retrieved so far.
+            List<Message> batch = history.retrievePast(Math.min(100, maxToScan - scanned)).complete();
+            if (batch.isEmpty()) {
+                reachedStart = true;
+                break;
+            }
+            for (Message m : batch) {
+                if (m.getContentDisplay().toLowerCase(Locale.ROOT).contains(needle)) {
+                    matches.add(m);
+                }
+            }
+            scanned += batch.size();
+        }
+
+        String coverage = reachedStart
+                ? "the whole history was scanned"
+                : "older messages were not scanned";
+        if (matches.isEmpty()) {
+            return String.format("No messages found containing \"%s\" (scanned %d messages, %s).",
+                    searchText, scanned, coverage);
+        }
+        return String.format("**Found %d messages containing \"%s\" (scanned %d messages, %s):**\n%s",
+                matches.size(), searchText, scanned, coverage, String.join("\n", formatMessages(matches)));
+    }
+
+    private int parseScanLimit(String maxMessages) {
+        if (maxMessages == null || maxMessages.isBlank()) {
+            return 500;
+        }
+
+        int limit;
+        try {
+            limit = Integer.parseInt(maxMessages.trim());
+        } catch (NumberFormatException ex) {
+            throw new IllegalArgumentException("maxMessages must be an integer between 1 and 1000");
+        }
+
+        if (limit < 1 || limit > 1000) {
+            throw new IllegalArgumentException("maxMessages must be between 1 and 1000");
+        }
+        return limit;
     }
 
     /**
