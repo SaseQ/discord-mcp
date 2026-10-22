@@ -391,6 +391,7 @@ Remote MCP Connector:
 - [`upsert_role_channel_permissions`](): Create or update permission overwrite for a role on a channel
 - [`upsert_member_channel_permissions`](): Create or update permission overwrite for a member on a channel
 - [`delete_channel_permission_overwrite`](): Delete a permission overwrite for a role or member from a channel
+- [`set_channel_readonly`](): Make a channel read-only for @everyone by denying (or resetting) only the Send Messages permission, leaving the rest of the @everyone overwrite untouched
 
 #### Invite Management
 - [`create_invite`](): Create a new invite link for a specific channel
