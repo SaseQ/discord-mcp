@@ -18,6 +18,7 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 
 @Service
 public class MessageService {
@@ -217,6 +218,86 @@ public class MessageService {
 
     private boolean isProvided(String value) {
         return value != null && !value.isBlank();
+    }
+
+    /**
+     * Searches the most recent messages of a channel or thread for a piece of text.
+     * Discord offers no bot-accessible per-channel search, so this scans the history newest to oldest,
+     * 100 messages per request, up to {@code maxMessages}.
+     *
+     * @param channelId   The ID of the channel or thread to search in.
+     * @param searchText  The text to search for (case-insensitive, matched against the displayed message content).
+     * @param maxMessages Optional maximum number of recent messages to scan (1-1000, default 500).
+     * @return A formatted string with the matching messages and how many messages were scanned.
+     */
+    @Tool(name = "search_messages", description = "Search the most recent messages of a channel or thread for text (case-insensitive). Scans up to maxMessages messages from newest to oldest (default 500, max 1000); it is not a server-side search")
+    public String searchMessages(@ToolParam(description = "Discord channel or thread ID") String channelId,
+                                 @ToolParam(description = "Text to search for (case-insensitive)") String searchText,
+                                 @ToolParam(description = "Maximum number of recent messages to scan (1-1000, default 500)", required = false) String maxMessages) {
+        if (channelId == null || channelId.isEmpty()) {
+            throw new IllegalArgumentException("channelId cannot be null");
+        }
+        if (searchText == null || searchText.isBlank()) {
+            throw new IllegalArgumentException("searchText cannot be null");
+        }
+        int maxToScan = parseScanLimit(maxMessages);
+
+        MessageChannel channel = getMessageChannelById(channelId);
+        if (channel == null) {
+            throw new IllegalArgumentException("Channel not found by channelId");
+        }
+
+        String needle = searchText.toLowerCase(Locale.ROOT);
+        MessageHistory history = channel.getHistory();
+        List<Message> matches = new ArrayList<>();
+        int scanned = 0;
+        boolean reachedStart = false;
+        while (scanned < maxToScan) {
+            // Each retrievePast call continues from the oldest message retrieved so far.
+            List<Message> batch = history.retrievePast(Math.min(100, maxToScan - scanned)).complete();
+            if (batch.isEmpty()) {
+                reachedStart = true;
+                break;
+            }
+            for (Message m : batch) {
+                if (m.getContentDisplay().toLowerCase(Locale.ROOT).contains(needle)) {
+                    matches.add(m);
+                }
+            }
+            scanned += batch.size();
+        }
+        // The limit was hit exactly: probe one more message to tell whether anything older exists.
+        if (!reachedStart) {
+            reachedStart = history.retrievePast(1).complete().isEmpty();
+        }
+
+        String coverage = reachedStart
+                ? "the whole history was scanned"
+                : "older messages were not scanned";
+        if (matches.isEmpty()) {
+            return String.format("No messages found containing \"%s\" (scanned %d messages, %s).",
+                    searchText, scanned, coverage);
+        }
+        return String.format("**Found %d messages containing \"%s\" (scanned %d messages, %s):**\n%s",
+                matches.size(), searchText, scanned, coverage, String.join("\n", formatMessages(matches)));
+    }
+
+    private int parseScanLimit(String maxMessages) {
+        if (maxMessages == null || maxMessages.isBlank()) {
+            return 500;
+        }
+
+        int limit;
+        try {
+            limit = Integer.parseInt(maxMessages.trim());
+        } catch (NumberFormatException ex) {
+            throw new IllegalArgumentException("maxMessages must be an integer between 1 and 1000");
+        }
+
+        if (limit < 1 || limit > 1000) {
+            throw new IllegalArgumentException("maxMessages must be between 1 and 1000");
+        }
+        return limit;
     }
 
     /**
@@ -420,7 +501,7 @@ public class MessageService {
         if (messageId == null || messageId.isEmpty()) {
             throw new IllegalArgumentException("messageId cannot be null");
         }
-        int maxToScan = parseReplyScanLimit(maxMessages);
+        int maxToScan = parseScanLimit(maxMessages);
 
         MessageChannel channel = getMessageChannelById(channelId);
         if (channel == null) {
@@ -451,6 +532,10 @@ public class MessageService {
             }
             batch = history.retrieveFuture(Math.min(100, maxToScan - scanned)).complete();
         }
+        // The limit was hit exactly: probe one more message to tell whether anything newer exists.
+        if (!reachedLatest) {
+            reachedLatest = history.retrieveFuture(1).complete().isEmpty();
+        }
         replies.sort(Comparator.comparingLong(Message::getIdLong));
 
         String coverage = reachedLatest
@@ -462,24 +547,6 @@ public class MessageService {
         }
         return String.format("**Found %d replies to message %s (scanned %d messages after it, %s):**\n%s",
                 replies.size(), messageId, scanned, coverage, String.join("\n", formatMessages(replies)));
-    }
-
-    private int parseReplyScanLimit(String maxMessages) {
-        if (maxMessages == null || maxMessages.isBlank()) {
-            return 500;
-        }
-
-        int limit;
-        try {
-            limit = Integer.parseInt(maxMessages.trim());
-        } catch (NumberFormatException ex) {
-            throw new IllegalArgumentException("maxMessages must be an integer between 1 and 1000");
-        }
-
-        if (limit < 1 || limit > 1000) {
-            throw new IllegalArgumentException("maxMessages must be between 1 and 1000");
-        }
-        return limit;
     }
 
     /**

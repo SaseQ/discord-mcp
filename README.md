@@ -329,6 +329,7 @@ Remote MCP Connector:
 - [`edit_message`](): Edit a message from a specific channel
 - [`delete_message`](): Delete a message from a specific channel
 - [`read_messages`](): Read message history from a specific channel (includes author IDs, reply markers, attachment metadata, supports `count` 1-100 and optional cursor: `before` or `after` or `around`)
+- [`search_messages`](): Search the most recent messages of a channel or thread for text (case-insensitive scan of up to 1000 messages, newest first)
 - [`add_reaction`](): Add a reaction (emoji) to a specific message
 - [`remove_reaction`](): Remove a specified reaction (emoji) from a message
 - [`get_message`](): Get a single message by ID in the same format as `read_messages`; replies include the message they reply to
