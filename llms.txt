@@ -1,0 +1,13 @@
+# discord-mcp
+
+> A Model Context Protocol server for the Discord API built on JDA, letting AI assistants manage channels, send messages, and retrieve server information from MCP-compatible clients.
+
+Written in Java and built with Maven; runs as a Docker container or a JAR, exposing an MCP endpoint at http://localhost:8085/mcp. Requires a Discord bot token, with optional DISCORD_GUILD_ID as a default server. Provides tools for server info, user and private message management, channel and category management, and message reactions.
+
+## Docs
+
+- [discord-mcp README](https://raw.githubusercontent.com/SaseQ/discord-mcp/main/README.md): MCP server for the Discord API using JDA, with Docker and Docker Compose installation steps and endpoint URLs.
+- [Description](https://github.com/SaseQ/discord-mcp/blob/main/README.md#-description): What the discord-mcp server does: managing channels, sending messages, and retrieving server information via MCP.
+- [Installation](https://github.com/SaseQ/discord-mcp/blob/main/README.md#-installation): Docker, Docker Compose, and manual Maven installation steps, environment variables, and default MCP endpoint URLs.
+- [Connections](https://github.com/SaseQ/discord-mcp/blob/main/README.md#-connections): Connection setup for config.json, Claude Code, Codex CLI, OpenClaw, Cursor, and n8n clients.
+- [Available Tools](https://github.com/SaseQ/discord-mcp/blob/main/README.md#️-available-tools): Available MCP tools for server information, user management, and message management with their parameters.
