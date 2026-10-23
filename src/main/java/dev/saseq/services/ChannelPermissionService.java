@@ -201,4 +201,45 @@ public class ChannelPermissionService {
 
         return String.format("Successfully deleted permission overwrite for %s **%s** (ID: %s) from channel", targetType, targetName, targetId);
     }
+
+    /**
+     * Makes a channel read-only for the @everyone role, or restores the default, by changing only the
+     * Send Messages (MESSAGE_SEND) bit of the @everyone permission overwrite. Every other allow/deny bit
+     * already present in that overwrite is left untouched, unlike {@code upsert_role_channel_permissions},
+     * which replaces the whole overwrite.
+     *
+     * @param guildId   Optional ID of the Discord server (guild). If not provided, the default server will be used.
+     * @param channelId The ID of the channel to modify.
+     * @param readonly  "true" to deny Send Messages for @everyone, "false" to clear the Send Messages bit so the channel's default applies.
+     * @param reason    Optional reason for the audit log.
+     * @return A confirmation message indicating the channel's new state.
+     */
+    @Tool(name = "set_channel_readonly", description = "Makes a channel read-only for @everyone by denying Send Messages (true), or resets that permission to the default (false). Only the Send Messages bit of the @everyone overwrite is changed; other overwrite bits are preserved")
+    public String setChannelReadonly(
+            @ToolParam(description = "Discord server ID", required = false) String guildId,
+            @ToolParam(description = "Channel ID") String channelId,
+            @ToolParam(description = "true to deny Send Messages for @everyone, false to reset it to the default") String readonly,
+            @ToolParam(description = "Reason for audit log", required = false) String reason) {
+
+        Guild guild = getGuild(guildId);
+        IPermissionContainer container = getPermissionContainer(guild, channelId);
+        if (readonly == null || readonly.isEmpty()) throw new IllegalArgumentException("readonly cannot be null");
+        if (!readonly.equalsIgnoreCase("true") && !readonly.equalsIgnoreCase("false"))
+            throw new IllegalArgumentException("readonly must be 'true' or 'false'");
+        boolean makeReadonly = Boolean.parseBoolean(readonly);
+
+        try {
+            var action = container.upsertPermissionOverride(guild.getPublicRole());
+            action = makeReadonly ? action.deny(Permission.MESSAGE_SEND) : action.clear(Permission.MESSAGE_SEND);
+            if (reason != null && !reason.isEmpty()) action.reason(reason);
+            action.complete();
+        } catch (InsufficientPermissionException e) {
+            throw new IllegalArgumentException("Bot lacks permission to manage channel permissions (" + e.getPermission().getName() + ")");
+        }
+
+        String name = container.getName();
+        return makeReadonly
+                ? "Channel #" + name + " is now read-only for @everyone (Send Messages denied)"
+                : "Channel #" + name + " no longer overrides Send Messages for @everyone (default applies)";
+    }
 }
