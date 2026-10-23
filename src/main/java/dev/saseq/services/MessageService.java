@@ -266,6 +266,10 @@ public class MessageService {
             }
             scanned += batch.size();
         }
+        // The limit was hit exactly: probe one more message to tell whether anything older exists.
+        if (!reachedStart) {
+            reachedStart = history.retrievePast(1).complete().isEmpty();
+        }
 
         String coverage = reachedStart
                 ? "the whole history was scanned"
@@ -527,6 +531,10 @@ public class MessageService {
                 break;
             }
             batch = history.retrieveFuture(Math.min(100, maxToScan - scanned)).complete();
+        }
+        // The limit was hit exactly: probe one more message to tell whether anything newer exists.
+        if (!reachedLatest) {
+            reachedLatest = history.retrieveFuture(1).complete().isEmpty();
         }
         replies.sort(Comparator.comparingLong(Message::getIdLong));
 
