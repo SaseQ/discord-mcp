@@ -4,6 +4,8 @@ import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.entities.Message;
+import net.dv8tion.jda.api.entities.MessageReference;
+import net.dv8tion.jda.api.entities.MessageType;
 import net.dv8tion.jda.api.entities.User;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
@@ -438,14 +440,17 @@ public class UserService {
                     String timestamp = m.getTimeCreated().toString();
                     String content = m.getContentDisplay();
                     String msgId = m.getId();
+                    String repliedToId = getRepliedToMessageId(m);
+                    String replyInfo = repliedToId != null ? " [Reply to: " + repliedToId + "]" : "";
 
                     StringBuilder sb = new StringBuilder();
                     sb.append(String.format(
-                            "- (ID: %s) **[%s]** (Author ID: %s) `%s`: ```%s```",
+                            "- (ID: %s) **[%s]** (Author ID: %s) `%s`%s: ```%s```",
                             msgId,
                             authorName,
                             authorId,
                             timestamp,
+                            replyInfo,
                             content
                     ));
 
@@ -459,6 +464,14 @@ public class UserService {
 
                     return sb.toString();
                 }).toList();
+    }
+
+    private String getRepliedToMessageId(Message message) {
+        MessageReference reference = message.getMessageReference();
+        if (message.getType() != MessageType.INLINE_REPLY || reference == null) {
+            return null;
+        }
+        return reference.getMessageId();
     }
 
     private String formatNullable(String value) {

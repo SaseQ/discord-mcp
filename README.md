@@ -322,15 +322,17 @@ Remote MCP Connector:
 - [`send_private_message`](): Send a private message to a specific user
 - [`edit_private_message`](): Edit a private message from a specific user
 - [`delete_private_message`](): Delete a private message from a specific user
-- [`read_private_messages`](): Read private message history from a specific user (includes author IDs, attachment metadata, supports `count` 1-100 and optional cursor: `before` or `after` or `around`)
+- [`read_private_messages`](): Read private message history from a specific user (includes author IDs, reply markers, attachment metadata, supports `count` 1-100 and optional cursor: `before` or `after` or `around`)
 
 #### Message Management
 - [`send_message`](): Send a message to a specific channel
 - [`edit_message`](): Edit a message from a specific channel
 - [`delete_message`](): Delete a message from a specific channel
-- [`read_messages`](): Read message history from a specific channel (includes author IDs, attachment metadata, supports `count` 1-100 and optional cursor: `before` or `after` or `around`)
+- [`read_messages`](): Read message history from a specific channel (includes author IDs, reply markers, attachment metadata, supports `count` 1-100 and optional cursor: `before` or `after` or `around`)
 - [`add_reaction`](): Add a reaction (emoji) to a specific message
 - [`remove_reaction`](): Remove a specified reaction (emoji) from a message
+- [`get_message`](): Get a single message by ID in the same format as `read_messages`; replies include the message they reply to
+- [`get_message_replies`](): Find replies to a message by scanning the messages posted after it (up to 1000)
 
 #### Channel Management
 - [`create_text_channel`](): Create a new text channel
