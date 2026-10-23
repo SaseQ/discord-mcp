@@ -41,7 +41,7 @@ public class ThreadService {
      * @param channelId The ID of the parent channel.
      * @return A formatted string listing each thread with its ID, status, creation time and jump URL.
      */
-    @Tool(name = "list_threads", description = "List the threads of one channel (text, news, forum or media): active threads plus up to 100 recent archived public threads. A returned thread ID can be used as channelId in read_messages and send_message")
+    @Tool(name = "list_threads", description = "List the threads of one channel (text, news, forum or media): active threads plus up to 100 recent archived public threads. A returned thread ID can be used as channelId in read_messages and send_message. Calling this also makes archived threads of the channel usable in get_thread_info and the message tools")
     public String listThreads(@ToolParam(description = "ID of the parent channel that contains the threads") String channelId) {
         if (channelId == null || channelId.isEmpty()) {
             throw new IllegalArgumentException("channelId cannot be null");
@@ -93,7 +93,7 @@ public class ThreadService {
      * @param threadId The ID of the thread.
      * @return A formatted string with the thread's name, parent channel, owner, state and counters.
      */
-    @Tool(name = "get_thread_info", description = "Get detailed information about a thread: parent channel, owner, archived/locked state, creation time, message and member counts")
+    @Tool(name = "get_thread_info", description = "Get detailed information about a thread: parent channel, owner, archived/locked state, creation time, message and member counts. Archived threads are found only after list_threads has been called on their parent channel")
     public String getThreadInfo(@ToolParam(description = "Thread ID") String threadId) {
         if (threadId == null || threadId.isEmpty()) {
             throw new IllegalArgumentException("threadId cannot be null");
@@ -101,7 +101,7 @@ public class ThreadService {
 
         ThreadChannel thread = jda.getThreadChannelById(threadId);
         if (thread == null) {
-            throw new IllegalArgumentException("Thread not found by threadId");
+            throw new IllegalArgumentException("Thread not found by threadId. If it is archived, call list_threads on its parent channel first");
         }
 
         String owner = thread.getOwner() != null

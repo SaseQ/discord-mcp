@@ -400,8 +400,8 @@ Remote MCP Connector:
 
 #### Thread Management
 - [`list_active_threads`](): List all active threads in the server
-- [`list_threads`](): List the threads of one channel (text, news, forum or media), including recent archived public threads; a returned thread ID works as `channelId` in the message tools
-- [`get_thread_info`](): Get detailed information about a thread (parent channel, owner, archived/locked state, message and member counts)
+- [`list_threads`](): List the threads of one channel (text, news, forum or media), including recent archived public threads; a returned thread ID works as `channelId` in the message tools (archived threads become usable there only after `list_threads` has been called on their parent channel)
+- [`get_thread_info`](): Get detailed information about a thread (parent channel, owner, archived/locked state, message and member counts; archived threads need `list_threads` on the parent channel first)
 
 #### Forum Management
 - [`create_forum_channel`](): Create a new forum channel
