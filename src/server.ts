@@ -47,8 +47,8 @@ export const createServer = (
     { name: SERVER_NAME, version: pkg.version },
     {
       instructions: INSTRUCTIONS,
-      // The tool list changes only on a restart with a new allowlist.
-      cacheHints: { "tools/list": { ttlMs: 3_600_000, cacheScope: "private" } },
+      // The list changes only on a restart, and a short TTL keeps a cached list from outliving one by long.
+      cacheHints: { "tools/list": { ttlMs: 300_000, cacheScope: "private" } },
     },
   );
   for (const tool of tools) tool.register(server, ctx);
