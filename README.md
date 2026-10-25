@@ -216,6 +216,7 @@ DISCORD_MCP_DENY="@destructive @roles @permissions @moderation"
 
 Version 2.0.0 merges tools.
 The old names of the parts of merged tools still work as selectors, such as `send_file` for the `files` of `send_message`.
+A part also allows the parameters that its tool shares with other parts, so `send_file` allows replies and embeds with the files.
 Update `get_attachment`, `get_user_id_by_name`, `remove_timeout`, `list_forum_tags`, and `list_active_threads` in `DISCORD_MCP_ALLOW` and `DISCORD_MCP_DENY`, and every old name in client permission rules, such as `mcp__discord__kick_member`:
 
 | Old tool | Use instead |
