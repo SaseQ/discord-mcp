@@ -1,0 +1,11 @@
+# Bun reads no `.env` file, so no secret of the developer reaches a test, a script, or a hook.
+env = false
+
+[install]
+linker = "isolated"
+
+[test]
+root = "tests"
+# Each temporary folder of the tests goes under one folder that the run removes at exit.
+# preload = ["./tests/"]
+timeout = 5000

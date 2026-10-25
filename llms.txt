@@ -1,0 +1,19 @@
+# discord-mcp-next
+
+> An MCP server that lets an AI assistant work with a Discord server through a bot: messages, DMs, threads, forums, channels, categories, roles, members, moderation, permissions, voice, webhooks, invites, emojis, and scheduled events. It runs on Bun and the Discord REST API, over stdio or HTTP, and is a TypeScript rewrite of SaseQ/discord-mcp.
+
+- `DISCORD_TOKEN` is the bot token. `DISCORD_GUILD_ID` is the server that tools use when a call gives no `guildId`.
+- `DISCORD_MCP_ALLOW` and `DISCORD_MCP_DENY` enable tools by name, glob, `@group`, or `@read`, `@write`, and `@destructive`. Merged tools, such as `moderate_member`, are filtered per part, and the old tool names, such as `kick_member` or `send_file`, select one part.
+- Version 2.0.0 merged several tools. The README lists each old name and its replacement.
+
+## Docs
+
+- [README](https://raw.githubusercontent.com/xsyetopz/discord-mcp-next/main/README.md): setup, configuration, tool allowlists, the tool list, and renamed tools
+- [Full reference](https://raw.githubusercontent.com/xsyetopz/discord-mcp-next/main/llms-full.txt): the README, then every tool with its access level and parameters, in one file
+- [Environment example](https://raw.githubusercontent.com/xsyetopz/discord-mcp-next/main/.env.example): each setting with its default
+
+## Optional
+
+- [docker-compose.yml](https://raw.githubusercontent.com/xsyetopz/discord-mcp-next/main/docker-compose.yml): the HTTP deployment, bound to 127.0.0.1:8085
+- [SaseQ/discord-mcp](https://github.com/SaseQ/discord-mcp): the Java server that this project rewrites
+- [License](https://raw.githubusercontent.com/xsyetopz/discord-mcp-next/main/LICENSE): MIT

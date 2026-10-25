@@ -3,17 +3,29 @@ services:
     container_name: discord-mcp
     build:
       context: .
-    image: saseq/discord-mcp:latest
     restart: unless-stopped
+    # Published on the loopback of the host only. Put a TLS proxy in front to reach it from another machine.
     ports:
-      - "8085:8085"
+      - "127.0.0.1:8085:8085"
     environment:
-      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-http}
-      DISCORD_TOKEN: ${DISCORD_TOKEN}
+      DISCORD_TOKEN: ${DISCORD_TOKEN:?set DISCORD_TOKEN}
       DISCORD_GUILD_ID: ${DISCORD_GUILD_ID:-}
+      DISCORD_MCP_TRANSPORT: http
+      # The container listens on all its interfaces, so a bearer token is required.
+      DISCORD_MCP_HTTP_HOST: 0.0.0.0
+      DISCORD_MCP_HTTP_TOKEN: ${DISCORD_MCP_HTTP_TOKEN:?set DISCORD_MCP_HTTP_TOKEN to 32 or more random characters}
+      DISCORD_MCP_HTTP_ALLOWED_HOSTS: ${DISCORD_MCP_HTTP_ALLOWED_HOSTS:-localhost,127.0.0.1}
+      DISCORD_MCP_ALLOW: ${DISCORD_MCP_ALLOW:-}
+      DISCORD_MCP_DENY: ${DISCORD_MCP_DENY:-@destructive}
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8085/actuator/health | grep -q '\"status\":\"UP\"'"]
+      test:
+        [
+          "CMD",
+          "bun",
+          "-e",
+          "const r = await fetch('http://127.0.0.1:8085/healthz'); process.exit(r.ok ? 0 : 1)",
+        ]
       interval: 30s
       timeout: 3s
       retries: 3
-      start_period: 20s
+      start_period: 10s

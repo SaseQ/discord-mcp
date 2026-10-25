@@ -1,0 +1,42 @@
+{
+  "name": "discord-mcp-next",
+  "version": "2.0.0",
+  "description": "MCP server for Discord, with tool allowlists, on Bun and Oceanic.js",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xsyetopz/discord-mcp-next.git"
+  },
+  "bin": {
+    "discord-mcp": "./src/main.ts"
+  },
+  "engines": {
+    "bun": ">=1.4.4"
+  },
+  "packageManager": "bun@1.4.4",
+  "scripts": {
+    "start": "bun run src/main.ts",
+    "dev": "bun --watch run src/main.ts",
+    "lint": "biome ci .",
+    "format": "biome check --write .",
+    "lint:md": "markdownlint-cli2",
+    "test": "bun test",
+    "ci": "bun check && bun run lint && bun run lint:md && bun test",
+    "tools": "bun run scripts/list-tools.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.4.0",
+    "oceanic.js": "1.15.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.3",
+    "@commitlint/cli": "21.2.4",
+    "@commitlint/config-conventional": "21.2.4",
+    "@types/bun": "1.4.4",
+    "@types/node": "26.6.5",
+    "markdownlint-cli2": "0.24.0"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://raw.githubusercontent.com/DavidAnson/markdownlint-cli2/main/schema/markdownlint-cli2-config-schema.json",
+  // The rules are in `.markdownlint.jsonc`, which the configs of the skill folders extend.
+  // `.claude/` holds the commands and skills that `openspec init` generates, so its text is not ours to lint.
+  // `.agents/` holds the skills that a user installs for this checkout, which git ignores, so their text is not ours to lint.
+  // `.claudetto/` holds the handoffs of the claudetto plugin, so its text is not ours to lint.
+  // `src/` holds the sources and the shared parts of the generator, and the files that it generates in `plugins/` are linted.
+  "globs": ["**/*.md"],
+  "ignores": [
+    "node_modules/**",
+    ".claude/**",
+    ".agents/**",
+    ".claudetto/**",
+    "src/**"
+  ]
+}

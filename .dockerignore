@@ -1,3 +1,9 @@
 .git
-target
-.env*
+.github
+.claude
+.env
+.env.*
+node_modules
+tests
+assets
+*.md

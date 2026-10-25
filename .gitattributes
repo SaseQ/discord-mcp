@@ -1,0 +1,2 @@
+# LF everywhere, so `biome ci` and the hooks see the same bytes on Windows.
+* text=auto eol=lf

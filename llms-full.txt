@@ -1,0 +1,1045 @@
+# discord-mcp-next
+
+> The full reference of discord-mcp-next, an MCP server for Discord: the README, then every tool with its parameters.
+
+An [MCP](https://modelcontextprotocol.io) server that lets an AI assistant work with a Discord server through a bot.
+It is a TypeScript rewrite of [SaseQ/discord-mcp](https://github.com/SaseQ/discord-mcp), with the same tools, some merged into fewer and broader ones (see [Renamed tools](#renamed-tools)), on [Bun](https://bun.com), [Oceanic.js](https://github.com/OceanicJS/Oceanic), and the MCP TypeScript SDK v2 (spec `2026-07-28`, and 2025-era clients still work).
+
+What is new against the Java version:
+
+- **Tool allowlists**: turn off tools such as `delete_channel`, `kick_member`, or `ban_member`, by name, glob, group, or access level.
+- **HTTP hardening**: binds to `127.0.0.1` by default, requires a bearer token on any other address, and checks `Host` and `Origin` against DNS rebinding.
+- **Safe file input**: URLs must be public `https` with no redirects, and local files must sit under folders that you list.
+- **New tools**: `get_message` (with the message it replies to, and its replies), `search_guild_messages`, `create_thread_from_message`, `get_member_by_id`, `search_members`, `list_guild_members`, `list_threads` (active and archived), and replies, embeds, files, and text search on the message tools.
+- **No gateway**: the server uses the Discord REST API only, so it starts fast and needs no privileged intent, except **Server Members Intent** for `list_guild_members`.
+
+## Create the Bot
+
+1. Open the [Discord Developer Portal](https://discord.com/developers/applications), and create an application.
+2. On the **Bot** page, select **Reset Token**, and copy the token.
+   The [discord.js guide](https://discordjs.guide/legacy/preparations/app-setup) shows each step with screenshots.
+   This value is `DISCORD_TOKEN`.
+   It is not the client ID, the client secret, or the public key.
+3. For `list_guild_members`, turn on **Server Members Intent** on the same page.
+4. On the **OAuth2** page, under **OAuth2 URL Generator**, select the `bot` scope and the permissions that the tools need, then open the URL to add the bot to your server.
+5. Optional: for `DISCORD_GUILD_ID`, turn on **Developer Mode** in Discord (User Settings > Advanced), right-click the server, and select **Copy Server ID**.
+
+## Run It
+
+### With Bun
+
+```bash
+git clone https://github.com/xsyetopz/discord-mcp-next.git
+cd discord-mcp-next
+bun install
+```
+
+Add the server to your MCP client, for example in `claude_desktop_config.json` or `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "discord": {
+      "command": "bun",
+      "args": ["run", "/absolute/path/to/discord-mcp-next/src/main.ts"],
+      "env": {
+        "DISCORD_TOKEN": "<bot token>",
+        "DISCORD_GUILD_ID": "<optional server ID>",
+        "DISCORD_MCP_DENY": "@destructive"
+      }
+    }
+  }
+}
+```
+
+### With Docker (`stdio`)
+
+```bash
+docker build -t discord-mcp-next .
+```
+
+Or use the image that CI publishes from `main` and from `v*` tags: replace `discord-mcp-next` below with `ghcr.io/xsyetopz/discord-mcp-next:latest`.
+To run exactly the image that you checked, pin it by digest, such as `ghcr.io/xsyetopz/discord-mcp-next@sha256:<digest>`; `docker buildx imagetools inspect ghcr.io/xsyetopz/discord-mcp-next:latest` prints the digest.
+
+```json
+{
+  "mcpServers": {
+    "discord": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "-e", "DISCORD_TOKEN",
+        "-e", "DISCORD_GUILD_ID",
+        "-e", "DISCORD_MCP_DENY=@destructive",
+        "discord-mcp-next"
+      ],
+      "env": { "DISCORD_TOKEN": "<bot token>", "DISCORD_GUILD_ID": "<optional server ID>" }
+    }
+  }
+}
+```
+
+The container runs as the unprivileged `bun` user.
+
+### Over HTTP
+
+The HTTP transport serves MCP at `/mcp` and a health check at `/healthz`.
+
+```bash
+cp .env.example .env   # set DISCORD_TOKEN and DISCORD_MCP_HTTP_TOKEN
+docker compose up -d
+```
+
+`docker-compose.yml` publishes the port on `127.0.0.1:8085` of the host only.
+Clients send `Authorization: Bearer <DISCORD_MCP_HTTP_TOKEN>`:
+
+```json
+{
+  "mcpServers": {
+    "discord": {
+      "type": "http",
+      "url": "http://localhost:8085/mcp",
+      "headers": { "Authorization": "Bearer <DISCORD_MCP_HTTP_TOKEN>" }
+    }
+  }
+}
+```
+
+Anyone with the token can use every enabled tool with the permissions of the bot.
+To reach the server from another machine, put a TLS proxy in front of it, and add its host name to `DISCORD_MCP_HTTP_ALLOWED_HOSTS`.
+
+### Scope and Limits
+
+- The bot reaches every server that it is in. `DISCORD_GUILD_ID` is a default for tools that take `guildId`, not a limit, and tools that take a `channelId` or a webhook URL work on any channel that the bot can see.
+- URL downloads check each address that the host name resolves to at connect time, so the address that passes the check is the address that the request uses.
+- `DISCORD_MCP_MAX_UPLOAD_BYTES` is the total of the files of one message.
+
+## Configuration
+
+Bun loads no `.env` file (see `bunfig.toml`), so set these in the environment of the process or in the `env` of the client config.
+`docker compose` reads `.env` itself.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `DISCORD_TOKEN` | required | The bot token. |
+| `DISCORD_GUILD_ID` | none | The server that tools use when a call gives no `guildId`. |
+| `DISCORD_MCP_TRANSPORT` | `stdio` | `stdio` or `http`. |
+| `DISCORD_MCP_HTTP_HOST` | `127.0.0.1` | The address that HTTP mode listens on. |
+| `DISCORD_MCP_HTTP_PORT` | `8085` | The port that HTTP mode listens on. |
+| `DISCORD_MCP_HTTP_TOKEN` | none | The bearer token, of 32 or more characters. Required when the host is not loopback. |
+| `DISCORD_MCP_HTTP_ALLOWED_HOSTS` | `localhost,127.0.0.1,[::1]` | The `Host` and `Origin` names that HTTP mode answers. |
+| `DISCORD_MCP_ALLOW` | every tool | Tool selectors to enable. |
+| `DISCORD_MCP_DENY` | none | Tool selectors to disable. Deny wins over allow. |
+| `DISCORD_MCP_FILE_ROOTS` | none | Absolute folders that file tools may read. Empty turns off local file reads. |
+| `DISCORD_MCP_MAX_UPLOAD_BYTES` | `10485760` | The size limit of the files of one message, in total. |
+
+## Tool Allowlists
+
+Each tool has a group and an access level:
+
+- `read` tools only read.
+- `write` tools create or change something.
+- `destructive` tools delete something or remove a member: every `delete_*` tool, and the `kick` and `ban` actions of `moderate_member`.
+
+`DISCORD_MCP_ALLOW` and `DISCORD_MCP_DENY` take a list of selectors, split by commas or spaces:
+
+| Selector | Matches |
+| --- | --- |
+| `send_message` | That tool. |
+| `kick_member`, `create_voice_channel` | That part of a merged tool: here the `kick` action of `moderate_member`, and the `voice` type of `create_channel`. |
+| `delete_*` | Tool names that match the glob. |
+| `@read`, `@write`, `@destructive` | The tools of that access level. |
+| `@messages`, `@moderation`, ... | The tools of that group. |
+| `*` | Every tool. |
+
+A tool is enabled when a selector of the allowlist matches it and no selector of the denylist matches it.
+A disabled tool is not registered, so the assistant never sees it.
+A selector that matches no tool stops the server at start, so a typo cannot leave a tool on.
+
+The merged tools `moderate_member`, `create_channel`, `react`, `set_member_role`, `upsert_channel_permissions`, `send_message`, and `send_private_message` have parts, each with its own name, group, and access level, which the selectors enable one by one.
+The assistant sees only the enabled values of the part parameter, such as `action`, and the parameters of the enabled parts, and the tool takes the highest access level among them.
+So `DISCORD_MCP_DENY=@destructive` keeps `moderate_member` for timeouts and voice moves, without `kick` or `ban`, and the name of the merged tool selects all of its parts.
+
+Examples:
+
+```bash
+# Everything except deletes, kicks, and bans.
+DISCORD_MCP_DENY=@destructive
+
+# Read-only.
+DISCORD_MCP_ALLOW=@read
+
+# Read, plus sending text messages, but no file uploads or DMs.
+DISCORD_MCP_ALLOW="@read send_message"
+DISCORD_MCP_DENY="send_file @dms"
+```
+
+The access levels follow one rule, so that a deny of `@destructive` blocks exactly what it says.
+Tools that change who can do what are `write` tools in the `@roles` and `@permissions` groups: `create_role` and `edit_role` set role permissions, `set_member_role` changes the roles of a member, and `upsert_channel_permissions` replaces a whole overwrite unless `merge` is true.
+For least privilege, deny those groups too:
+
+```bash
+DISCORD_MCP_DENY="@destructive @roles @permissions @moderation"
+```
+
+`bun run tools` prints each tool and each part with its group and access level, and whether the current `DISCORD_MCP_ALLOW` and `DISCORD_MCP_DENY` enable it.
+
+## Tools
+
+<!-- tools:start -->
+66 tools. A merged tool shows its parts in parentheses.
+
+| Group | Read | Write | Destructive |
+| --- | --- | --- | --- |
+| `@server` | `get_server_info` | - | - |
+| `@dms` | `read_private_messages` | `send_private_message`, `edit_private_message` | `delete_private_message` |
+| `@members` | `get_member_by_id`, `search_members`, `list_guild_members` | - | - |
+| `@messages` | `read_messages`, `get_message`, `search_guild_messages` | `send_message`, `edit_message`, `react` | `delete_message` |
+| `@channels` | `find_channel`, `list_channels`, `get_channel_info` | `create_channel` (`text`), `edit_text_channel`, `move_channel` | `delete_channel` |
+| `@categories` | `find_category`, `list_channels_in_category` | `create_category`, `edit_category` | `delete_category` |
+| `@permissions` | `list_channel_permission_overwrites` | `upsert_channel_permissions` | `delete_channel_permission_overwrite` |
+| `@roles` | `list_roles` | `create_role`, `edit_role`, `set_member_role` | `delete_role` |
+| `@moderation` | `get_bans` | `moderate_member` (`unban`, `timeout`), `set_nickname` | `moderate_member` (`kick`, `ban`) |
+| `@voice` | - | `create_channel` (`voice`, `stage`), `edit_voice_channel`, `moderate_member` (`move`, `disconnect`), `modify_voice_state` | - |
+| `@threads` | `list_threads` | `create_thread_from_message` | - |
+| `@forums` | `list_forum_channels`, `get_forum_channel_info`, `list_forum_posts` | `create_channel` (`forum`), `edit_forum_channel`, `create_forum_post`, `modify_forum_post` | - |
+| `@webhooks` | `list_webhooks` | `create_webhook`, `send_webhook_message` | `delete_webhook` |
+| `@invites` | `list_invites`, `get_invite_details` | `create_invite` | `delete_invite` |
+| `@emojis` | `list_emojis`, `get_emoji_details` | `create_emoji`, `edit_emoji` | `delete_emoji` |
+| `@events` | `list_guild_scheduled_events`, `get_guild_scheduled_event_users` | `create_guild_scheduled_event`, `edit_guild_scheduled_event` | `delete_guild_scheduled_event` |
+<!-- tools:end -->
+
+### Renamed Tools
+
+Version 2.0.0 merges tools.
+The old names of the parts of merged tools still work as selectors, such as `send_file` for the `files` of `send_message`.
+A part also allows the parameters that its tool shares with other parts, so `send_file` allows replies and embeds with the files.
+Update `get_attachment`, `get_user_id_by_name`, `remove_timeout`, `list_forum_tags`, and `list_active_threads` in `DISCORD_MCP_ALLOW` and `DISCORD_MCP_DENY`, and every old name in client permission rules, such as `mcp__discord__kick_member`:
+
+| Old tool | Use instead |
+| --- | --- |
+| `send_file`, `send_private_file` | `send_message`, `send_private_message` with `files` |
+| `get_attachment` | `get_message`, which takes `attachmentId` |
+| `add_reaction`, `remove_reaction` | `react` with `action` |
+| `get_user_id_by_name` | `search_members`, which takes `name#discriminator` |
+| `kick_member`, `ban_member`, `unban_member`, `timeout_member`, `move_member`, `disconnect_member` | `moderate_member` with `action` |
+| `remove_timeout` | `moderate_member` with `action: "timeout"` and `durationSeconds: 0` |
+| `assign_role`, `remove_role` | `set_member_role` with `action` |
+| `upsert_role_channel_permissions`, `upsert_member_channel_permissions` | `upsert_channel_permissions` with `targetType` |
+| `create_text_channel`, `create_voice_channel`, `create_stage_channel`, `create_forum_channel` | `create_channel` with `type` |
+| `list_forum_tags` | `get_forum_channel_info` |
+| `list_active_threads` | `list_threads` |
+
+Tools of the Java version that this server covers in another way:
+
+- `search_messages` is `read_messages` with `contains`.
+- `get_message_replies` is `get_message` with `includeReplies`.
+- `get_thread_info` is `get_channel_info`, which also takes a thread ID.
+- `set_channel_readonly` is `upsert_channel_permissions` on the `@everyone` role (the server ID) with `denyPermissions: "SEND_MESSAGES"` and `merge: true`.
+
+## Development
+
+```bash
+bun install
+bun run ci       # bun check, biome ci, markdownlint, bun test
+bun run dev      # restarts on change
+```
+
+`bun check` is the TypeScript 7 type checker that Bun 1.4.4 ships.
+
+[`llms.txt`](llms.txt) indexes the docs for AI assistants, in the [llms.txt format](https://llmstxt.org).
+[`llms-full.txt`](llms-full.txt) holds this README and every tool with its parameters in one file.
+After a change to this README or to a tool, run `bun run scripts/llms.ts` to rebuild it; `bun test` fails while it is stale.
+
+## License
+
+MIT.
+See [LICENSE](LICENSE).
+
+## Tool Reference
+
+Each tool lists its access level and parameters. A merged tool lists its parts: the old tool names, which `DISCORD_MCP_ALLOW` and `DISCORD_MCP_DENY` still select one by one.
+
+### @server
+
+#### `get_server_info`
+
+Get server info: owner, member and channel counts, boosts, features.
+
+Access: `read`.
+
+- `guildId`: string
+
+### @dms
+
+#### `send_private_message`
+
+Send a direct message (DM) to a user: text or embeds. @everyone, @here, and roles do not ping unless allowEveryone. files uploads files.
+
+Access: `write`.
+Parts: `send_private_message` (text; @dms, write), `send_private_file` (files; @dms, write).
+
+- `userId` (required): string; User of the DM
+- `message`: string; at most 2000 characters
+- `embeds`: array of objects with `title`, `description`, `url`, `color`, `fields`, `footer`, `image`, `thumbnail`, `author`, `authorUrl`, `timestamp`
+- `files`: array of objects with `filePath`, `fileUrl`, `fileData`, `fileName`
+- `allowEveryone`: boolean; Let @everyone, @here, and roles ping
+
+#### `edit_private_message`
+
+Edit a direct message that the bot sent to a user: new text, new embeds, or both. Embeds replace the old ones.
+
+Access: `write`.
+
+- `userId` (required): string; User of the DM
+- `messageId` (required): string
+- `newMessage`: string; at most 2000 characters
+- `embeds`: array of objects with `title`, `description`, `url`, `color`, `fields`, `footer`, `image`, `thumbnail`, `author`, `authorUrl`, `timestamp`
+- `allowEveryone`: boolean; Let @everyone, @here, and roles ping
+
+#### `delete_private_message`
+
+Delete a direct message from the DM with a user.
+
+Access: `destructive`.
+
+- `userId` (required): string; User of the DM
+- `messageId` (required): string
+
+#### `read_private_messages`
+
+Read the direct messages (DM) with a user, newest first. Page with one of before, after, or around.
+
+Access: `read`.
+
+- `userId` (required): string; User of the DM
+- `count`: integer; 1..100; Default 100
+- `before`: string
+- `after`: string
+- `around`: string
+
+### @members
+
+#### `get_member_by_id`
+
+Get a server member by user ID: names, join date, roles with names, and the timeout end if one is active.
+
+Access: `read`.
+
+- `guildId`: string
+- `userId` (required): string
+
+#### `search_members`
+
+Find server members, and their user IDs for <@id> mentions, by username, display name, nickname, name#discriminator, or user ID. Exact matches come first.
+
+Access: `read`.
+
+- `guildId`: string
+- `query` (required): string
+- `limit`: integer; 1..100; default 25
+
+#### `list_guild_members`
+
+List server members, one page at a time; pass nextAfter as after for the next page. Needs the Server Members privileged intent.
+
+Access: `read`.
+
+- `guildId`: string
+- `limit`: integer; 1..1000; default 100
+- `after`: string
+
+### @messages
+
+#### `send_message`
+
+Send a message to a channel or thread: text, embeds, or a reply. @everyone, @here, and roles do not ping unless allowEveryone. files uploads files.
+
+Access: `write`.
+Parts: `send_message` (text; @messages, write), `send_file` (files; @messages, write).
+
+- `channelId` (required): string
+- `message`: string; at most 2000 characters
+- `replyToMessageId`: string
+- `failIfNotExists`: boolean; Fail the reply if its message is gone. Default true
+- `embeds`: array of objects with `title`, `description`, `url`, `color`, `fields`, `footer`, `image`, `thumbnail`, `author`, `authorUrl`, `timestamp`
+- `files`: array of objects with `filePath`, `fileUrl`, `fileData`, `fileName`
+- `allowEveryone`: boolean; Let @everyone, @here, and roles ping
+
+#### `edit_message`
+
+Edit a message in a channel or thread: new text, new embeds, or both. Embeds replace the old ones.
+
+Access: `write`.
+
+- `channelId` (required): string
+- `messageId` (required): string
+- `newMessage`: string; at most 2000 characters
+- `embeds`: array of objects with `title`, `description`, `url`, `color`, `fields`, `footer`, `image`, `thumbnail`, `author`, `authorUrl`, `timestamp`
+- `allowEveryone`: boolean; Let @everyone, @here, and roles ping
+
+#### `delete_message`
+
+Delete a message from a channel or thread.
+
+Access: `destructive`.
+
+- `channelId` (required): string
+- `messageId` (required): string
+
+#### `read_messages`
+
+Read or search the history of a channel or thread, newest first. Page with one of before, after, or around. contains finds text by scanning up to scanLimit messages.
+
+Access: `read`.
+
+- `channelId` (required): string
+- `count`: integer; 1..100; Default 100
+- `before`: string
+- `after`: string
+- `around`: string
+- `contains`: string; Return only messages with this text, ignoring case
+- `scanLimit`: integer; 1..1000; Messages to scan, default 500
+
+#### `get_message`
+
+Get one message of a channel or thread by ID, with its attachments, link, and the message it replies to. attachmentId keeps one attachment. includeReplies finds its replies by scanning the newer messages.
+
+Access: `read`.
+
+- `channelId` (required): string
+- `messageId` (required): string
+- `attachmentId`: string
+- `includeReplies`: boolean
+- `scanLimit`: integer; 1..1000; Messages to scan, default 500
+
+#### `search_guild_messages`
+
+Search all messages of a server with Discord's search index, by text, author, mention, channel, or content type. Returns the total and up to 25 messages; page with offset.
+
+Access: `read`.
+
+- `guildId`: string
+- `content`: string; at most 2000 characters
+- `authorId`: string
+- `mentions`: string; Mentioned user ID
+- `channelId`: string
+- `has`: array of one of `link`, `embed`, `file`, `video`, `image`, `sound`
+- `minId`: string; Sent after this ID
+- `maxId`: string; Sent before this ID
+- `offset`: integer; 0..9007199254740991
+- `limit`: integer; 1..25; Default 25
+
+#### `react`
+
+Set the bot's emoji reaction on a message. emoji is Unicode, or name:id for a custom emoji. add adds it. remove removes it.
+
+Access: `write`.
+Parts: `add_reaction` (add; @messages, write), `remove_reaction` (remove; @messages, write).
+
+- `channelId` (required): string
+- `messageId` (required): string
+- `emoji` (required): string
+- `action` (required): one of `add`, `remove`
+
+### @channels
+
+#### `delete_channel`
+
+Delete a channel.
+
+Access: `destructive`.
+
+- `guildId`: string
+- `channelId` (required): string
+- `reason`: string; at most 512 characters
+
+#### `create_channel`
+
+Create a channel, optionally in a category. text takes topic (at most 1024 characters), nsfw, and slowmode. voice takes bitrate and userLimit. stage takes bitrate. forum takes topic as the post guidelines, nsfw, and slowmode for new posts.
+
+Access: `write`.
+Parts: `create_text_channel` (text; @channels, write), `create_voice_channel` (voice; @voice, write), `create_stage_channel` (stage; @voice, write), `create_forum_channel` (forum; @forums, write).
+
+- `type` (required): one of `text`, `voice`, `stage`, `forum`
+- `guildId`: string
+- `name` (required): string; at most 100 characters
+- `categoryId`: string
+- `topic`: string; at most 4096 characters
+- `nsfw`: boolean
+- `slowmode`: integer; 0..21600; Seconds
+- `position`: integer; 0..9007199254740991
+- `bitrate`: integer; 8000..9007199254740991; Bits per second
+- `userLimit`: integer; 0..99; 0 means unlimited
+- `reason`: string; at most 512 characters
+
+#### `find_channel`
+
+Find channels by name, case-insensitive. Returns every match.
+
+Access: `read`.
+
+- `guildId`: string
+- `channelName` (required): string; at most 100 characters
+
+#### `list_channels`
+
+List the server's channels. Excludes threads.
+
+Access: `read`.
+
+- `guildId`: string
+
+#### `edit_text_channel`
+
+Edit a text or announcement channel: name, topic, NSFW, slowmode, category, position. Only given fields change.
+
+Access: `write`.
+
+- `guildId`: string
+- `channelId` (required): string
+- `name`: string; at most 100 characters
+- `topic`: string; at most 1024 characters
+- `nsfw`: boolean
+- `slowmode`: integer; 0..21600; Seconds
+- `categoryId`: string; Empty string removes the category
+- `position`: integer; 0..9007199254740991
+- `reason`: string; at most 512 characters
+
+#### `get_channel_info`
+
+Get channel or thread details with creation time. For a thread: parent, owner, archived, locked, message and member counts.
+
+Access: `read`.
+
+- `guildId`: string
+- `channelId` (required): string
+
+#### `move_channel`
+
+Move a channel to another category or out of its category, or change its position. Not for categories.
+
+Access: `write`.
+
+- `guildId`: string
+- `channelId` (required): string
+- `categoryId`: string; Empty string removes the category
+- `position`: integer; 0..9007199254740991
+- `reason`: string; at most 512 characters
+
+### @categories
+
+#### `create_category`
+
+Create a channel category.
+
+Access: `write`.
+
+- `guildId`: string
+- `name` (required): string; at most 100 characters
+- `reason`: string; at most 512 characters
+
+#### `delete_category`
+
+Delete a channel category. Its channels are kept.
+
+Access: `destructive`.
+
+- `guildId`: string
+- `categoryId` (required): string
+- `reason`: string; at most 512 characters
+
+#### `edit_category`
+
+Rename or reorder a channel category.
+
+Access: `write`.
+
+- `guildId`: string
+- `categoryId` (required): string
+- `name`: string; at most 100 characters
+- `position`: integer; 0..9007199254740991
+- `reason`: string; at most 512 characters
+
+#### `find_category`
+
+Find a channel category by name, case-insensitive. Fails on duplicate names.
+
+Access: `read`.
+
+- `guildId`: string
+- `categoryName` (required): string; at most 100 characters
+
+#### `list_channels_in_category`
+
+List the channels directly under a category, without threads.
+
+Access: `read`.
+
+- `guildId`: string
+- `categoryId` (required): string
+
+### @permissions
+
+#### `list_channel_permission_overwrites`
+
+List channel permission overwrites: target type and ID, allow and deny flags decoded into names.
+
+Access: `read`.
+
+- `guildId`: string
+- `channelId` (required): string
+
+#### `upsert_channel_permissions`
+
+Create, replace, or merge a permission overwrite on a channel. role: targetId is a role. Lock a channel read-only: role, targetId = the server ID (@everyone), denyPermissions SEND_MESSAGES, merge true; unlock with clearPermissions SEND_MESSAGES. member: targetId is a user.
+
+Access: `write`.
+Parts: `upsert_role_channel_permissions` (role; @permissions, write), `upsert_member_channel_permissions` (member; @permissions, write).
+
+- `guildId`: string
+- `channelId` (required): string
+- `targetType` (required): one of `role`, `member`
+- `targetId` (required): string
+- `allowRaw`: string; Decimal bitfield
+- `denyRaw`: string; Decimal bitfield
+- `allowPermissions`: string; CSV of names, e.g. VIEW_CHANNEL
+- `denyPermissions`: string; CSV of names, e.g. VIEW_CHANNEL
+- `merge`: boolean; Keep other bits of the old overwrite, default false
+- `clearPermissions`: string; CSV of names to reset, merge only
+- `reason`: string; at most 512 characters
+
+#### `delete_channel_permission_overwrite`
+
+Delete a role or member permission overwrite from a channel; the target falls back to channel defaults.
+
+Access: `destructive`.
+
+- `guildId`: string
+- `channelId` (required): string
+- `targetType` (required): one of `role`, `member`
+- `targetId` (required): string
+- `reason`: string; at most 512 characters
+
+### @roles
+
+#### `list_roles`
+
+List roles with color, position, flags, and permissions.
+
+Access: `read`.
+
+- `guildId`: string
+
+#### `create_role`
+
+Create a role.
+
+Access: `write`.
+
+- `guildId`: string
+- `name` (required): string; at most 100 characters
+- `color`: integer; 0..16777215; RGB integer, 0 for none
+- `hoist`: boolean
+- `mentionable`: boolean
+- `permissions`: string; Bitfield as a digit string
+- `reason`: string; at most 512 characters
+
+#### `edit_role`
+
+Edit a role. Only given fields change. Not @everyone.
+
+Access: `write`.
+
+- `guildId`: string
+- `roleId` (required): string
+- `name`: string; at most 100 characters
+- `color`: integer; 0..16777215; RGB integer, 0 for none
+- `hoist`: boolean
+- `mentionable`: boolean
+- `permissions`: string; Bitfield as a digit string
+- `reason`: string; at most 512 characters
+
+#### `delete_role`
+
+Delete a role permanently. Not @everyone.
+
+Access: `destructive`.
+
+- `guildId`: string
+- `roleId` (required): string
+- `reason`: string; at most 512 characters
+
+#### `set_member_role`
+
+Set a role on a member. Not @everyone. add gives it. remove takes it away.
+
+Access: `write`.
+Parts: `assign_role` (add; @roles, write), `remove_role` (remove; @roles, write).
+
+- `guildId`: string
+- `userId` (required): string
+- `roleId` (required): string
+- `action` (required): one of `add`, `remove`
+- `reason`: string; at most 512 characters
+
+### @moderation
+
+#### `moderate_member`
+
+Act on a server member, or a banned user for unban. kick removes them; they can rejoin with an invite. ban also deletes deleteMessageSeconds of their messages. unban lets them rejoin. timeout mutes them for durationSeconds, at most 28 days; 0 removes it. move takes a connected member to the voice or stage channelId. disconnect removes them from voice.
+
+Access: `destructive`.
+Parts: `kick_member` (kick; @moderation, destructive), `ban_member` (ban; @moderation, destructive), `unban_member` (unban; @moderation, write), `timeout_member` (timeout; @moderation, write), `move_member` (move; @voice, write), `disconnect_member` (disconnect; @voice, write).
+
+- `action` (required): one of `kick`, `ban`, `unban`, `timeout`, `move`, `disconnect`
+- `guildId`: string
+- `userId` (required): string
+- `deleteMessageSeconds`: integer; 0..604800
+- `durationSeconds`: integer; 0..2419200
+- `channelId`: string
+- `reason`: string; at most 512 characters
+
+#### `set_nickname`
+
+Set or reset a member's nickname.
+
+Access: `write`.
+
+- `guildId`: string
+- `userId` (required): string
+- `nick`: string; Empty or omitted resets it
+- `reason`: string; at most 512 characters
+
+#### `get_bans`
+
+List banned users with their ban reasons.
+
+Access: `read`.
+
+- `guildId`: string
+- `limit`: integer; 1..1000; default 50
+
+### @voice
+
+#### `edit_voice_channel`
+
+Edit a voice or stage channel: name, bitrate, user limit, voice region.
+
+Access: `write`.
+
+- `channelId` (required): string
+- `name`: string; at most 100 characters
+- `bitrate`: integer; 8000..9007199254740991; Bits per second
+- `userLimit`: integer; 0..99; 0 means unlimited
+- `rtcRegion`: string; Such as rotterdam. Empty string sets automatic
+- `reason`: string; at most 512 characters
+
+#### `modify_voice_state`
+
+Server mute or deafen a connected member.
+
+Access: `write`.
+
+- `guildId`: string
+- `userId` (required): string
+- `mute`: boolean
+- `deafen`: boolean
+- `reason`: string; at most 512 characters
+
+Also in @voice: `moderate_member` with `move` (`move_member`, write), `moderate_member` with `disconnect` (`disconnect_member`, write), `create_channel` with `voice` (`create_voice_channel`, write), `create_channel` with `stage` (`create_stage_channel`, write).
+
+### @threads
+
+#### `list_threads`
+
+List threads with parent channel names. Without channelId: the server's active threads. With channelId: that channel's active and up to 100 recent archived public threads.
+
+Access: `read`.
+
+- `guildId`: string
+- `channelId`: string
+
+#### `create_thread_from_message`
+
+Start a thread from a message in a text or announcement channel.
+
+Access: `write`.
+
+- `channelId` (required): string
+- `messageId` (required): string
+- `name` (required): string; at most 100 characters
+- `autoArchiveDuration`: one of `60`, `1440`, `4320`, `10080`; Idle minutes before archiving. Default: channel setting
+
+### @forums
+
+#### `edit_forum_channel`
+
+Edit a forum channel: name, topic, NSFW, slowmode, category, position, sort, layout.
+
+Access: `write`.
+
+- `guildId`: string
+- `channelId` (required): string
+- `name`: string; at most 100 characters
+- `topic`: string; at most 4096 characters; Post guidelines
+- `nsfw`: boolean; Whether the channel is NSFW
+- `slowmode`: integer; 0..21600; Default slowmode for new posts, in seconds (0-21600)
+- `categoryId`: string; at most 20 characters; Empty string removes the category
+- `position`: integer; 0..9007199254740991; Position in the channel list
+- `defaultSort`: one of `RECENT_ACTIVITY`, `CREATION_TIME`
+- `defaultLayout`: one of `LIST_VIEW`, `GALLERY_VIEW`
+- `reason`: string; at most 512 characters
+
+#### `list_forum_channels`
+
+List forum channels.
+
+Access: `read`.
+
+- `guildId`: string
+
+#### `get_forum_channel_info`
+
+Get a forum channel's settings and tags.
+
+Access: `read`.
+
+- `guildId`: string
+- `channelId` (required): string
+
+#### `create_forum_post`
+
+Create a forum post (thread) with a first message and optional tags.
+
+Access: `write`.
+
+- `guildId`: string
+- `channelId` (required): string
+- `title` (required): string; at most 100 characters
+- `message` (required): string; at most 2000 characters
+- `tagIds`: string; at most 500 characters; Comma-separated IDs or names, max 5. Empty string clears
+- `reason`: string; at most 512 characters
+
+#### `list_forum_posts`
+
+List active posts (threads) of a forum channel.
+
+Access: `read`.
+
+- `guildId`: string
+- `channelId` (required): string
+
+#### `modify_forum_post`
+
+Lock, archive, pin, or retag a forum post.
+
+Access: `write`.
+
+- `guildId`: string
+- `postId` (required): string
+- `locked`: boolean
+- `archived`: boolean
+- `pinned`: boolean
+- `tagIds`: string; at most 500 characters; Comma-separated IDs or names, max 5. Empty string clears
+- `reason`: string; at most 512 characters
+
+Also in @forums: `create_channel` with `forum` (`create_forum_channel`, write).
+
+### @webhooks
+
+#### `create_webhook`
+
+Create a channel webhook. The URL is returned only once.
+
+Access: `write`.
+
+- `channelId` (required): string
+- `name` (required): string; at most 80 characters
+- `reason`: string; at most 512 characters
+
+#### `delete_webhook`
+
+Delete a webhook.
+
+Access: `destructive`.
+
+- `webhookId` (required): string
+- `reason`: string; at most 512 characters
+
+#### `list_webhooks`
+
+List a channel's webhooks (IDs and names, never URLs).
+
+Access: `read`.
+
+- `channelId` (required): string
+
+#### `send_webhook_message`
+
+Send a message through a Discord webhook URL.
+
+Access: `write`.
+
+- `webhookUrl` (required): string; at most 300 characters; https://discord.com/api/webhooks/{id}/{token}
+- `message` (required): string; at most 2000 characters
+
+### @invites
+
+#### `create_invite`
+
+Create an invite link for a channel.
+
+Access: `write`.
+
+- `guildId`: string
+- `channelId` (required): string
+- `maxAge`: integer; 0..604800; Seconds, 0 = never
+- `maxUses`: integer; 0..100; 0 = unlimited
+- `temporary`: boolean
+- `unique`: boolean
+- `reason`: string; at most 512 characters
+
+#### `list_invites`
+
+List active invites with channel, creator, uses, and limits.
+
+Access: `read`.
+
+- `guildId`: string
+
+#### `delete_invite`
+
+Revoke an invite so its link stops working.
+
+Access: `destructive`.
+
+- `inviteCode` (required): string; at most 500 characters; Code or discord.gg URL
+- `reason`: string; at most 512 characters
+
+#### `get_invite_details`
+
+Get a public invite's server, channel, creator, and member counts.
+
+Access: `read`.
+
+- `inviteCode` (required): string; at most 500 characters; Code or discord.gg URL
+- `withCounts`: boolean
+
+### @emojis
+
+#### `list_emojis`
+
+List custom emojis with ID, name, animated flag, and roles.
+
+Access: `read`.
+
+- `guildId`: string
+
+#### `get_emoji_details`
+
+Get a custom emoji: flags, image URL, and roles that may use it.
+
+Access: `read`.
+
+- `guildId`: string
+- `emojiId` (required): string
+
+#### `create_emoji`
+
+Upload a custom emoji from base64, an https URL, or a file path. PNG, JPEG, GIF, or WebP up to 256 KiB.
+
+Access: `write`.
+
+- `guildId`: string
+- `name` (required): string; at most 100 characters; 2-32 letters, digits, or _
+- `image`: string; Base64 or data URI
+- `imageUrl`: string; at most 2048 characters; Public https URL
+- `filePath`: string; Absolute path under DISCORD_MCP_FILE_ROOTS
+- `roles`: string; Comma-separated role IDs
+- `reason`: string; at most 512 characters
+
+#### `edit_emoji`
+
+Rename a custom emoji or change its roles. Empty roles means everyone.
+
+Access: `write`.
+
+- `guildId`: string
+- `emojiId` (required): string
+- `name`: string; at most 100 characters; 2-32 letters, digits, or _
+- `roles`: string; Comma-separated role IDs
+- `reason`: string; at most 512 characters
+
+#### `delete_emoji`
+
+Delete a custom emoji.
+
+Access: `destructive`.
+
+- `guildId`: string
+- `emojiId` (required): string
+- `reason`: string; at most 512 characters
+
+### @events
+
+#### `create_guild_scheduled_event`
+
+Create a scheduled event. Types 1 and 2 need channelId; type 3 needs location and end time.
+
+Access: `write`.
+
+- `guildId`: string
+- `name` (required): string; at most 100 characters
+- `description`: string; at most 1000 characters
+- `scheduledStartTime` (required): string; at most 64 characters; ISO 8601 with offset, e.g. 2030-11-01T18:00:00Z
+- `scheduledEndTime`: string; at most 64 characters; ISO 8601 with offset, e.g. 2030-11-01T18:00:00Z
+- `entityType` (required): number; 1=Stage, 2=Voice, 3=External
+- `channelId`: string
+- `location`: string; at most 100 characters
+- `reason`: string; at most 512 characters
+
+#### `edit_guild_scheduled_event`
+
+Edit a scheduled event, or start, complete, or cancel it with status.
+
+Access: `write`.
+
+- `guildId`: string
+- `eventId` (required): string
+- `status`: number; 1=Scheduled, 2=Active, 3=Completed, 4=Canceled
+- `name`: string; at most 100 characters
+- `description`: string; at most 1000 characters
+- `scheduledStartTime`: string; at most 64 characters; ISO 8601 with offset, e.g. 2030-11-01T18:00:00Z
+- `location`: string; at most 100 characters
+- `reason`: string; at most 512 characters
+
+#### `delete_guild_scheduled_event`
+
+Delete a scheduled event.
+
+Access: `destructive`.
+
+- `guildId`: string
+- `eventId` (required): string
+- `reason`: string; at most 512 characters
+
+#### `list_guild_scheduled_events`
+
+List active and scheduled events with times, status, and interested count.
+
+Access: `read`.
+
+- `guildId`: string
+- `withUserCount`: boolean
+
+#### `get_guild_scheduled_event_users`
+
+List users interested in a scheduled event, with nickname and roles.
+
+Access: `read`.
+
+- `guildId`: string
+- `eventId` (required): string
+- `limit`: integer; 1..100
+- `withMember`: boolean

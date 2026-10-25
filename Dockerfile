@@ -1,30 +1,15 @@
-FROM docker.io/library/maven:3.9.6-amazoncorretto-17 AS build
-
+FROM oven/bun:1.4.4-alpine AS deps
 WORKDIR /app
+COPY package.json bun.lock bunfig.toml ./
+RUN bun install --frozen-lockfile --production --ignore-scripts
 
-COPY pom.xml .
+FROM oven/bun:1.4.4-alpine
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=deps /app/node_modules ./node_modules
+COPY package.json tsconfig.json ./
 COPY src ./src
 
-RUN mvn clean package -DskipTests
-
-FROM docker.io/library/amazoncorretto:17-alpine
-
-WORKDIR /app
-
-COPY --from=build /app/target/*.jar app.jar
-
-ENV DISCORD_TOKEN=""
-ENV DISCORD_GUILD_ID=""
-
-# Run as an unprivileged user so a compromised dependency can't act as root in the container.
-# Pre-create the log directory and hand ownership to the app user, since /app is root-owned.
-RUN addgroup -S app && adduser -S -G app app \
-    && mkdir -p /app/target/logs \
-    && chown -R app:app /app/target
-USER app
-
-EXPOSE 8085
-
-# No HEALTHCHECK here: stdio mode has no HTTP endpoint. docker-compose.yml defines one for HTTP mode.
-
-ENTRYPOINT ["java", "-jar", "app.jar"]
+# The default transport is stdio, so the image has no HTTP health check; docker-compose.yml adds one for HTTP mode.
+USER bun
+ENTRYPOINT ["bun", "run", "src/main.ts"]

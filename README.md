@@ -1,430 +1,260 @@
 <div align="center">
-  <img src="assets/img/Discord_MCP_full_logo.svg" width="60%" alt="DeepSeek-V3" />
+  <img src="assets/img/Discord_MCP_full_logo.svg" width="60%" alt="Discord MCP" />
 </div>
 <hr>
-<div align="center" style="line-height: 1;">
-    <a href="https://github.com/modelcontextprotocol/servers" target="_blank" style="margin: 2px;">
-        <img alt="MCP Server" src="https://badge.mcpx.dev?type=server" style="display: inline-block; vertical-align: middle;"/>
-    </a>
-    <a href="https://discord.gg/5Uvxe5jteM" target="_blank" style="margin: 2px;">
-        <img alt="Discord" src="https://img.shields.io/discord/936242526120194108?color=7389D8&label&logo=discord&logoColor=ffffff" style="display: inline-block; vertical-align: middle;"/>
-    </a>
-    <a href="https://github.com/SaseQ/discord-mcp/blob/main/LICENSE" target="_blank" style="margin: 2px;">
-        <img alt="MIT License" src="https://img.shields.io/github/license/SaseQ/discord-mcp" style="display: inline-block; vertical-align: middle;"/>
-    </a>
-</div>
 
+# `discord-mcp-next`
 
-## 📖 Description
+An [MCP](https://modelcontextprotocol.io) server that lets an AI assistant work with a Discord server through a bot.
+It is a TypeScript rewrite of [SaseQ/discord-mcp](https://github.com/SaseQ/discord-mcp), with the same tools, some merged into fewer and broader ones (see [Renamed tools](#renamed-tools)), on [Bun](https://bun.com), [Oceanic.js](https://github.com/OceanicJS/Oceanic), and the MCP TypeScript SDK v2 (spec `2026-07-28`, and 2025-era clients still work).
 
-A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/introduction) server for the Discord API using [(JDA)](https://jda.wiki/),
-designed to integrate Discord bots with MCP-compatible applications such as Claude, ChatGPT etc. It allows AI assistants to interact with 
-Discord by managing channels, sending messages, and retrieving server information. Ideal for building powerful Discord automation and AI-driven workflows.
+What is new against the Java version:
 
+- **Tool allowlists**: turn off tools such as `delete_channel`, `kick_member`, or `ban_member`, by name, glob, group, or access level.
+- **HTTP hardening**: binds to `127.0.0.1` by default, requires a bearer token on any other address, and checks `Host` and `Origin` against DNS rebinding.
+- **Safe file input**: URLs must be public `https` with no redirects, and local files must sit under folders that you list.
+- **New tools**: `get_message` (with the message it replies to, and its replies), `search_guild_messages`, `create_thread_from_message`, `get_member_by_id`, `search_members`, `list_guild_members`, `list_threads` (active and archived), and replies, embeds, files, and text search on the message tools.
+- **No gateway**: the server uses the Discord REST API only, so it starts fast and needs no privileged intent, except **Server Members Intent** for `list_guild_members`.
 
-## 🔬 Installation
+## Create the Bot
 
-### ► 🐳 Docker Installation (Recommended)
+1. Open the [Discord Developer Portal](https://discord.com/developers/applications), and create an application.
+2. On the **Bot** page, select **Reset Token**, and copy the token.
+   The [discord.js guide](https://discordjs.guide/legacy/preparations/app-setup) shows each step with screenshots.
+   This value is `DISCORD_TOKEN`.
+   It is not the client ID, the client secret, or the public key.
+3. For `list_guild_members`, turn on **Server Members Intent** on the same page.
+4. On the **OAuth2** page, under **OAuth2 URL Generator**, select the `bot` scope and the permissions that the tools need, then open the URL to add the bot to your server.
+5. Optional: for `DISCORD_GUILD_ID`, turn on **Developer Mode** in Discord (User Settings > Advanced), right-click the server, and select **Copy Server ID**.
 
-> [!NOTE]
-> Docker installation is required. Full instructions can be found on [docker.com](https://www.docker.com/products/docker-desktop/).
+## Run It
 
-#### 1) Set local env variables
-```bash
-export DISCORD_TOKEN="YOUR_DISCORD_BOT_TOKEN"
-export DISCORD_GUILD_ID="OPTIONAL_DEFAULT_SERVER_ID"
-export SPRING_PROFILES_ACTIVE=http
-```
-
-> [!IMPORTANT]
-> Instructions for creating a Discord bot and retrieving its token can be found [here](https://discordjs.guide/legacy/preparations/app-setup).
-
-> [!TIP]
-> The `DISCORD_GUILD_ID` env variable is optional.
-> 
-> When provided, it sets a default Discord server ID so any tool that accepts a `guildId` parameter can omit it.
-
-#### 2) Run the Docker container
-```bash
-docker run -d -i \
-  --name discord-mcp \
-  --restart unless-stopped \
-  -p 8085:8085 \
-  -e SPRING_PROFILES_ACTIVE \
-  -e DISCORD_TOKEN \
-  -e DISCORD_GUILD_ID \
-  saseq/discord-mcp:latest
-```
-
-Default MCP endpoint URL (HTTP profile): `http://localhost:8085/mcp`
-
-<details>
-    <summary style="font-size: 1.35em; font-weight: bold;">
-        🐋 Docker Compose Installation
-    </summary>
-
-#### 1) Clone the repository
-```bash
-git clone https://github.com/SaseQ/discord-mcp
-```
-
-#### 2) Go to the project directory
-```bash
-cd discord-mcp
-```
-
-#### 3) Create local runtime env
-```bash
-cat > .env <<EOF
-SPRING_PROFILES_ACTIVE=http
-DISCORD_TOKEN=<YOUR_DISCORD_BOT_TOKEN>
-DISCORD_GUILD_ID=<OPTIONAL_DEFAULT_SERVER_ID>
-EOF
-```
-
-#### 4) Start one shared MCP server container
-```bash
-docker compose up -d --build
-```
-
-#### 5) Verify
-```bash
-docker ps --filter name=discord-mcp
-curl -fsS http://localhost:8085/actuator/health
-```
-
-> [!TIP]
-> You do not need to set `LOGGING_PATTERN_CONSOLE` manually.
-> Logging is configured automatically for both `http` and legacy `stdio` modes.
-
-Default MCP endpoint URL (HTTP profile): `http://localhost:8085/mcp`
-
-Health endpoint (Actuator): `http://localhost:8085/actuator/health`
-
-</details>
-
-<details>
-    <summary style="font-size: 1.35em; font-weight: bold;">
-        🔧 Manual Installation
-    </summary>
-
-#### 1) Clone the repository
-```bash
-git clone https://github.com/SaseQ/discord-mcp
-```
-
-#### 2) Build the project
-
-> NOTE: Maven installation is required to use the mvn command. Full instructions can be found [here](https://www.baeldung.com/install-maven-on-windows-linux-mac).
+### With Bun
 
 ```bash
-cd discord-mcp
-mvn clean package # The jar file will be available in the /target directory
+git clone https://github.com/xsyetopz/discord-mcp-next.git
+cd discord-mcp-next
+bun install
 ```
 
-#### 3) Configure AI client
-Run the JAR as a long-running server:
+Add the server to your MCP client, for example in `claude_desktop_config.json` or `.mcp.json`:
 
-```bash
-DISCORD_TOKEN=<YOUR_DISCORD_BOT_TOKEN> \
-DISCORD_GUILD_ID=<OPTIONAL_DEFAULT_SERVER_ID> \
-SPRING_PROFILES_ACTIVE=http \
-java -jar /absolute/path/to/discord-mcp-1.0.0.jar
-```
-
-> NOTE: The `DISCORD_GUILD_ID` environment variable is optional. When provided, it sets a default Discord server ID so any tool that accepts a `guildId` parameter can omit it.
-
-Default MCP endpoint URL (HTTP profile): `http://localhost:8085/mcp`
-
-</details>
-
-## 🔗 Connections
-
-### ► 🗞️ Default config.json Connection
-
-Recommended (HTTP singleton mode):
 ```json
 {
   "mcpServers": {
-    "discord-mcp": {
-      "url": "http://localhost:8085/mcp"
-    }
-  }
-}
-```
-
-Legacy mode (stdio, starts a new process/container per client session):
-```json
-{
-  "mcpServers": {
-    "discord-mcp": {
-      "command": "docker",
-      "args": [
-        "run",
-        "--rm",
-        "-i",
-        "-e",
-        "DISCORD_TOKEN=<YOUR_DISCORD_BOT_TOKEN>",
-        "-e",
-        "DISCORD_GUILD_ID=<OPTIONAL_DEFAULT_SERVER_ID>",
-        "saseq/discord-mcp:latest"
-      ]
-    }
-  }
-}
-```
-
-<details>
-    <summary style="font-size: 1.35em; font-weight: bold;">
-        ⌨️ Claude Code Connection
-    </summary>
-
-Recommended (HTTP singleton mode):
-```bash
-claude mcp add discord-mcp --transport http http://localhost:8085/mcp
-```
-
-Legacy mode (stdio, starts a new process/container per client session):
-```bash
-claude mcp add discord-mcp -- docker run --rm -i -e DISCORD_TOKEN=<YOUR_DISCORD_BOT_TOKEN> -e DISCORD_GUILD_ID=<OPTIONAL_DEFAULT_SERVER_ID> saseq/discord-mcp:latest
-```
-
-</details>
-
-<details>
-    <summary style="font-size: 1.35em; font-weight: bold;">
-        🤖 Codex CLI Connection
-    </summary>
-
-```bash
-codex mcp add discord-mcp --url http://localhost:8085/mcp
-codex mcp list
-```
-
-</details>
-
-<details>
-    <summary style="font-size: 1.35em; font-weight: bold;">
-        🦞 OpenClaw Connection
-    </summary>
-
-Run this command:
-```bash
-openclaw mcp set discord-mcp '{"url":"http://localhost:8085/mcp","transport":"streamable-http"}'
-openclaw mcp list
-```
-
-OR
-
-Pasting the following configuration into your OpenClaw `~/.openclaw/config.json` file:
-```json
-{
-  "mcp": {
-    "servers": {
-      "discord-mcp": {
-        "url": "http://localhost:8085/mcp",
-        "transport": "streamable-http"
+    "discord": {
+      "command": "bun",
+      "args": ["run", "/absolute/path/to/discord-mcp-next/src/main.ts"],
+      "env": {
+        "DISCORD_TOKEN": "<bot token>",
+        "DISCORD_GUILD_ID": "<optional server ID>",
+        "DISCORD_MCP_DENY": "@destructive"
       }
     }
   }
 }
 ```
 
-</details>
+### With Docker (`stdio`)
 
-<details>
-    <summary style="font-size: 1.35em; font-weight: bold;">
-        🖲 Cursor Connection
-    </summary>
-
-Go to: `Settings` -> `Cursor Settings` -> `MCP` -> `Add new global MCP server`
-
-Pasting the following configuration into your Cursor `~/.cursor/mcp.json` file is the recommended approach. You may also install in a specific project by creating `.cursor/mcp.json` in your project folder. See [Cursor MCP docs](https://docs.cursor.com/context/model-context-protocol) for more info.
-```json
-{
-  "mcpServers": {
-    "discord-mcp": {
-      "url": "http://localhost:8085/mcp"
-    }
-  }
-}
+```bash
+docker build -t discord-mcp-next .
 ```
 
-</details>
+Or use the image that CI publishes from `main` and from `v*` tags: replace `discord-mcp-next` below with `ghcr.io/xsyetopz/discord-mcp-next:latest`.
+To run exactly the image that you checked, pin it by digest, such as `ghcr.io/xsyetopz/discord-mcp-next@sha256:<digest>`; `docker buildx imagetools inspect ghcr.io/xsyetopz/discord-mcp-next:latest` prints the digest.
 
-<details>
-    <summary style="font-size: 1.35em; font-weight: bold;">
-        🚀 n8n Connection
-    </summary>
-
-#### Connect in n8n
-1. Open n8n and add an **MCP Client** node.
-2. Choose **HTTP** or **Streamable HTTP** transport (depending on your n8n version/node options).
-3. Set the server URL to: `http://localhost:8085/mcp`
-4. Save the node and test the connection.
-5. After connecting, you can use the available Discord tools exposed by `discord-mcp` inside your workflow.
-
-#### Notes
-- If n8n is running in Docker, `localhost` may point to the n8n container itself, not your host machine.
-- In that case, use the Docker service name or another reachable host, for example: `http://discord-mcp:8085/mcp`
-
-</details>
-
-<details>
-    <summary style="font-size: 1.35em; font-weight: bold;">
-        🖥 Claude Desktop Connection
-    </summary>
-
-
-
-STDIO local config (Default, legacy):
-> Past the following configuration into your Claude Desktop `claude_desktop_config.json` file.
 ```json
 {
   "mcpServers": {
-    "discord-mcp": {
+    "discord": {
       "command": "docker",
       "args": [
-        "run",
-        "--rm",
-        "-i",
-        "-e",
-        "DISCORD_TOKEN=<YOUR_DISCORD_BOT_TOKEN>",
-        "-e",
-        "DISCORD_GUILD_ID=<OPTIONAL_DEFAULT_SERVER_ID>",
-        "saseq/discord-mcp:latest"
-      ]
+        "run", "--rm", "-i",
+        "-e", "DISCORD_TOKEN",
+        "-e", "DISCORD_GUILD_ID",
+        "-e", "DISCORD_MCP_DENY=@destructive",
+        "discord-mcp-next"
+      ],
+      "env": { "DISCORD_TOKEN": "<bot token>", "DISCORD_GUILD_ID": "<optional server ID>" }
     }
   }
 }
 ```
 
-Remote MCP Connector:
-1. Open Claude Desktop and go to `Settings` -> `Connectors`.
-2. Add a custom connector and set MCP URL to your server endpoint (for example `https://<PUBLIC_HOST>/mcp`).
-3. Save and reconnect.
+The container runs as the unprivileged `bun` user.
 
-> Claude Desktop remote connectors are managed via Connectors UI (not `claude_desktop_config.json`).
-> `http://localhost:8085/mcp` is reachable only from your machine. For Claude Desktop remote connectors, expose the endpoint with public HTTPS (for example tunnel/reverse proxy).
+### Over HTTP
 
-</details>
+The HTTP transport serves MCP at `/mcp` and a health check at `/healthz`.
 
+```bash
+cp .env.example .env   # set DISCORD_TOKEN and DISCORD_MCP_HTTP_TOKEN
+docker compose up -d
+```
 
-## 🛠️ Available Tools
+`docker-compose.yml` publishes the port on `127.0.0.1:8085` of the host only.
+Clients send `Authorization: Bearer <DISCORD_MCP_HTTP_TOKEN>`:
 
-#### Server Information
-- [`get_server_info`](): Get detailed discord server information
+```json
+{
+  "mcpServers": {
+    "discord": {
+      "type": "http",
+      "url": "http://localhost:8085/mcp",
+      "headers": { "Authorization": "Bearer <DISCORD_MCP_HTTP_TOKEN>" }
+    }
+  }
+}
+```
 
-#### User Management
-- [`get_user_id_by_name`](): Get a Discord user's ID by username in a guild for ping usage `<@id>`
-- [`get_member_by_id`](): Get a Discord guild member by stable user ID, including username, global name, nickname, effective name, bot flag, join time, and roles
-- [`search_members`](): Search Discord guild members by ID, username, global name, nickname, or effective name and return identity candidates with stable user IDs
-- [`send_private_message`](): Send a private message to a specific user
-- [`edit_private_message`](): Edit a private message from a specific user
-- [`delete_private_message`](): Delete a private message from a specific user
-- [`read_private_messages`](): Read private message history from a specific user (includes author IDs, reply markers, attachment metadata, supports `count` 1-100 and optional cursor: `before` or `after` or `around`)
+Anyone with the token can use every enabled tool with the permissions of the bot.
+To reach the server from another machine, put a TLS proxy in front of it, and add its host name to `DISCORD_MCP_HTTP_ALLOWED_HOSTS`.
 
-#### Message Management
-- [`send_message`](): Send a message to a specific channel
-- [`edit_message`](): Edit a message from a specific channel
-- [`delete_message`](): Delete a message from a specific channel
-- [`read_messages`](): Read message history from a specific channel (includes author IDs, reply markers, attachment metadata, supports `count` 1-100 and optional cursor: `before` or `after` or `around`)
-- [`search_messages`](): Search the most recent messages of a channel or thread for text (case-insensitive scan of up to 1000 messages, newest first)
-- [`add_reaction`](): Add a reaction (emoji) to a specific message
-- [`remove_reaction`](): Remove a specified reaction (emoji) from a message
-- [`get_message`](): Get a single message by ID in the same format as `read_messages`; replies include the message they reply to
-- [`get_message_replies`](): Find replies to a message by scanning the messages posted after it (up to 1000)
+### Scope and Limits
 
-#### Channel Management
-- [`create_text_channel`](): Create a new text channel
-- [`edit_text_channel`](): Edit settings of a text channel (name, topic, nsfw, slowmode, category, position)
-- [`delete_channel`](): Delete a channel
-- [`find_channel`](): Find a channel type and ID using name and server ID
-- [`list_channels`](): List of all channels
-- [`get_channel_info`](): Get detailed information about a channel
-- [`move_channel`](): Move a channel to another category and/or change its position
+- The bot reaches every server that it is in. `DISCORD_GUILD_ID` is a default for tools that take `guildId`, not a limit, and tools that take a `channelId` or a webhook URL work on any channel that the bot can see.
+- URL downloads check each address that the host name resolves to at connect time, so the address that passes the check is the address that the request uses.
+- `DISCORD_MCP_MAX_UPLOAD_BYTES` is the total of the files of one message.
 
-#### Category Management
-- [`create_category`](): Create a new category for channels
-- [`edit_category`](): Edit a category (rename or move position)
-- [`delete_category`](): Delete a category
-- [`find_category`](): Find a category ID using name and server ID
-- [`list_channels_in_category`](): List of channels in a specific category
+## Configuration
 
-#### Webhook Management
-- [`create_webhook`](): Create a new webhook on a specific channel
-- [`delete_webhook`](): Delete a webhook
-- [`list_webhooks`](): List of webhooks on a specific channel
-- [`send_webhook_message`](): Send a message via webhook
+Bun loads no `.env` file (see `bunfig.toml`), so set these in the environment of the process or in the `env` of the client config.
+`docker compose` reads `.env` itself.
 
-#### Role Management
-- [`list_roles`](): Get a list of all roles on the server with their details
-- [`create_role`](): Create a new role on the server
-- [`edit_role`](): Modify an existing role's settings
-- [`delete_role`](): Permanently delete a role from the server
-- [`assign_role`](): Assign a role to a user
-- [`remove_role`](): Remove a role from a user
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `DISCORD_TOKEN` | required | The bot token. |
+| `DISCORD_GUILD_ID` | none | The server that tools use when a call gives no `guildId`. |
+| `DISCORD_MCP_TRANSPORT` | `stdio` | `stdio` or `http`. |
+| `DISCORD_MCP_HTTP_HOST` | `127.0.0.1` | The address that HTTP mode listens on. |
+| `DISCORD_MCP_HTTP_PORT` | `8085` | The port that HTTP mode listens on. |
+| `DISCORD_MCP_HTTP_TOKEN` | none | The bearer token, of 32 or more characters. Required when the host is not loopback. |
+| `DISCORD_MCP_HTTP_ALLOWED_HOSTS` | `localhost,127.0.0.1,[::1]` | The `Host` and `Origin` names that HTTP mode answers. |
+| `DISCORD_MCP_ALLOW` | every tool | Tool selectors to enable. |
+| `DISCORD_MCP_DENY` | none | Tool selectors to disable. Deny wins over allow. |
+| `DISCORD_MCP_FILE_ROOTS` | none | Absolute folders that file tools may read. Empty turns off local file reads. |
+| `DISCORD_MCP_MAX_UPLOAD_BYTES` | `10485760` | The size limit of the files of one message, in total. |
 
-#### Moderation and User Management
-- [`kick_member`](): Kicks a member from the server
-- [`ban_member`](): Bans a user from the server
-- [`unban_member`](): Removes a ban from a user
-- [`timeout_member`](): Disables communication for a member for a specified duration
-- [`remove_timeout`](): Removes a timeout (unmute) from a member before it expires
-- [`set_nickname`](): Changes a member's nickname on the server
-- [`get_bans`](): Returns a list of banned users on the server with ban reasons
+## Tool Allowlists
 
-#### Voice & Stage Channel Management
-- [`create_voice_channel`](): Create a new voice channel in a guild
-- [`create_stage_channel`](): Create a new stage channel for audio events
-- [`edit_voice_channel`](): Edit settings of a voice or stage channel (name, bitrate, user limit, region)
-- [`move_member`](): Move a member to another voice channel
-- [`disconnect_member`](): Disconnect a member from their current voice channel
-- [`modify_voice_state`](): Server mute or deafen a member in voice channels
+Each tool has a group and an access level:
 
-#### Scheduled Events Management
-- [`create_guild_scheduled_event`](): Schedule a new event on the server (voice, stage, or external)
-- [`edit_guild_scheduled_event`](): Modify event details or change its status (start, complete, cancel)
-- [`delete_guild_scheduled_event`](): Permanently delete a scheduled event
-- [`list_guild_scheduled_events`](): List all active and scheduled events on the server
-- [`get_guild_scheduled_event_users`](): Get list of users interested in a scheduled event
+- `read` tools only read.
+- `write` tools create or change something.
+- `destructive` tools delete something or remove a member: every `delete_*` tool, and the `kick` and `ban` actions of `moderate_member`.
 
-#### Channel Permission Overwrites
-- [`list_channel_permission_overwrites`](): List all permission overwrites for a channel with role/member breakdown
-- [`upsert_role_channel_permissions`](): Create or update permission overwrite for a role on a channel
-- [`upsert_member_channel_permissions`](): Create or update permission overwrite for a member on a channel
-- [`delete_channel_permission_overwrite`](): Delete a permission overwrite for a role or member from a channel
+`DISCORD_MCP_ALLOW` and `DISCORD_MCP_DENY` take a list of selectors, split by commas or spaces:
 
-#### Invite Management
-- [`create_invite`](): Create a new invite link for a specific channel
-- [`list_invites`](): List all active invites on the server with their statistics
-- [`delete_invite`](): Delete (revoke) an invite so the link stops working
-- [`get_invite_details`](): Get details about a specific invite (works for any public invite)
+| Selector | Matches |
+| --- | --- |
+| `send_message` | That tool. |
+| `kick_member`, `create_voice_channel` | That part of a merged tool: here the `kick` action of `moderate_member`, and the `voice` type of `create_channel`. |
+| `delete_*` | Tool names that match the glob. |
+| `@read`, `@write`, `@destructive` | The tools of that access level. |
+| `@messages`, `@moderation`, ... | The tools of that group. |
+| `*` | Every tool. |
 
-#### Thread Management
-- [`list_active_threads`](): List all active threads in the server
-- [`list_threads`](): List the threads of one channel (text, news, forum or media), including recent archived public threads; a returned thread ID works as `channelId` in the message tools (archived threads become usable there only after `list_threads` has been called on their parent channel)
-- [`get_thread_info`](): Get detailed information about a thread (parent channel, owner, archived/locked state, message and member counts; archived threads need `list_threads` on the parent channel first)
+A tool is enabled when a selector of the allowlist matches it and no selector of the denylist matches it.
+A disabled tool is not registered, so the assistant never sees it.
+A selector that matches no tool stops the server at start, so a typo cannot leave a tool on.
 
-#### Forum Management
-- [`create_forum_channel`](): Create a new forum channel
-- [`edit_forum_channel`](): Edit settings of a forum channel (name, topic, nsfw, slowmode, category, position, default sort, default layout)
-- [`list_forum_channels`](): List all forum channels in the server
-- [`get_forum_channel_info`](): Get detailed information about a forum channel including tags and settings
-- [`list_forum_tags`](): List all available tags in a forum channel
-- [`create_forum_post`](): Create a new forum post (thread) with an initial message in a forum channel
-- [`list_forum_posts`](): List active posts (threads) in a forum channel
-- [`modify_forum_post`](): Modify a forum post: lock/unlock, archive/unarchive, pin/unpin, or change applied tags
+The merged tools `moderate_member`, `create_channel`, `react`, `set_member_role`, `upsert_channel_permissions`, `send_message`, and `send_private_message` have parts, each with its own name, group, and access level, which the selectors enable one by one.
+The assistant sees only the enabled values of the part parameter, such as `action`, and the parameters of the enabled parts, and the tool takes the highest access level among them.
+So `DISCORD_MCP_DENY=@destructive` keeps `moderate_member` for timeouts and voice moves, without `kick` or `ban`, and the name of the merged tool selects all of its parts.
 
-#### Emoji Management
-- [`list_emojis`](): List all custom emojis on the server
-- [`get_emoji_details`](): Get detailed information about a specific custom emoji
-- [`create_emoji`](): Upload a new custom emoji to the server (base64 or image URL, max 256KB)
-- [`edit_emoji`](): Edit an existing emoji's name or role restrictions
-- [`delete_emoji`](): Permanently delete a custom emoji from the server
+Examples:
 
->If `DISCORD_GUILD_ID` is set, the `guildId` parameter becomes optional for all tools above.
+```bash
+# Everything except deletes, kicks, and bans.
+DISCORD_MCP_DENY=@destructive
 
-<hr>
+# Read-only.
+DISCORD_MCP_ALLOW=@read
 
-A more detailed examples can be found in the [Wiki](https://github.com/SaseQ/discord-mcp/wiki).
+# Read, plus sending text messages, but no file uploads or DMs.
+DISCORD_MCP_ALLOW="@read send_message"
+DISCORD_MCP_DENY="send_file @dms"
+```
+
+The access levels follow one rule, so that a deny of `@destructive` blocks exactly what it says.
+Tools that change who can do what are `write` tools in the `@roles` and `@permissions` groups: `create_role` and `edit_role` set role permissions, `set_member_role` changes the roles of a member, and `upsert_channel_permissions` replaces a whole overwrite unless `merge` is true.
+For least privilege, deny those groups too:
+
+```bash
+DISCORD_MCP_DENY="@destructive @roles @permissions @moderation"
+```
+
+`bun run tools` prints each tool and each part with its group and access level, and whether the current `DISCORD_MCP_ALLOW` and `DISCORD_MCP_DENY` enable it.
+
+## Tools
+
+<!-- tools:start -->
+66 tools. A merged tool shows its parts in parentheses.
+
+| Group | Read | Write | Destructive |
+| --- | --- | --- | --- |
+| `@server` | `get_server_info` | - | - |
+| `@dms` | `read_private_messages` | `send_private_message`, `edit_private_message` | `delete_private_message` |
+| `@members` | `get_member_by_id`, `search_members`, `list_guild_members` | - | - |
+| `@messages` | `read_messages`, `get_message`, `search_guild_messages` | `send_message`, `edit_message`, `react` | `delete_message` |
+| `@channels` | `find_channel`, `list_channels`, `get_channel_info` | `create_channel` (`text`), `edit_text_channel`, `move_channel` | `delete_channel` |
+| `@categories` | `find_category`, `list_channels_in_category` | `create_category`, `edit_category` | `delete_category` |
+| `@permissions` | `list_channel_permission_overwrites` | `upsert_channel_permissions` | `delete_channel_permission_overwrite` |
+| `@roles` | `list_roles` | `create_role`, `edit_role`, `set_member_role` | `delete_role` |
+| `@moderation` | `get_bans` | `moderate_member` (`unban`, `timeout`), `set_nickname` | `moderate_member` (`kick`, `ban`) |
+| `@voice` | - | `create_channel` (`voice`, `stage`), `edit_voice_channel`, `moderate_member` (`move`, `disconnect`), `modify_voice_state` | - |
+| `@threads` | `list_threads` | `create_thread_from_message` | - |
+| `@forums` | `list_forum_channels`, `get_forum_channel_info`, `list_forum_posts` | `create_channel` (`forum`), `edit_forum_channel`, `create_forum_post`, `modify_forum_post` | - |
+| `@webhooks` | `list_webhooks` | `create_webhook`, `send_webhook_message` | `delete_webhook` |
+| `@invites` | `list_invites`, `get_invite_details` | `create_invite` | `delete_invite` |
+| `@emojis` | `list_emojis`, `get_emoji_details` | `create_emoji`, `edit_emoji` | `delete_emoji` |
+| `@events` | `list_guild_scheduled_events`, `get_guild_scheduled_event_users` | `create_guild_scheduled_event`, `edit_guild_scheduled_event` | `delete_guild_scheduled_event` |
+<!-- tools:end -->
+
+### Renamed Tools
+
+Version 2.0.0 merges tools.
+The old names of the parts of merged tools still work as selectors, such as `send_file` for the `files` of `send_message`.
+A part also allows the parameters that its tool shares with other parts, so `send_file` allows replies and embeds with the files.
+Update `get_attachment`, `get_user_id_by_name`, `remove_timeout`, `list_forum_tags`, and `list_active_threads` in `DISCORD_MCP_ALLOW` and `DISCORD_MCP_DENY`, and every old name in client permission rules, such as `mcp__discord__kick_member`:
+
+| Old tool | Use instead |
+| --- | --- |
+| `send_file`, `send_private_file` | `send_message`, `send_private_message` with `files` |
+| `get_attachment` | `get_message`, which takes `attachmentId` |
+| `add_reaction`, `remove_reaction` | `react` with `action` |
+| `get_user_id_by_name` | `search_members`, which takes `name#discriminator` |
+| `kick_member`, `ban_member`, `unban_member`, `timeout_member`, `move_member`, `disconnect_member` | `moderate_member` with `action` |
+| `remove_timeout` | `moderate_member` with `action: "timeout"` and `durationSeconds: 0` |
+| `assign_role`, `remove_role` | `set_member_role` with `action` |
+| `upsert_role_channel_permissions`, `upsert_member_channel_permissions` | `upsert_channel_permissions` with `targetType` |
+| `create_text_channel`, `create_voice_channel`, `create_stage_channel`, `create_forum_channel` | `create_channel` with `type` |
+| `list_forum_tags` | `get_forum_channel_info` |
+| `list_active_threads` | `list_threads` |
+
+Tools of the Java version that this server covers in another way:
+
+- `search_messages` is `read_messages` with `contains`.
+- `get_message_replies` is `get_message` with `includeReplies`.
+- `get_thread_info` is `get_channel_info`, which also takes a thread ID.
+- `set_channel_readonly` is `upsert_channel_permissions` on the `@everyone` role (the server ID) with `denyPermissions: "SEND_MESSAGES"` and `merge: true`.
+
+## Development
+
+```bash
+bun install
+bun run ci       # bun check, biome ci, markdownlint, bun test
+bun run dev      # restarts on change
+```
+
+`bun check` is the TypeScript 7 type checker that Bun 1.4.4 ships.
+
+[`llms.txt`](llms.txt) indexes the docs for AI assistants, in the [llms.txt format](https://llmstxt.org).
+[`llms-full.txt`](llms-full.txt) holds this README and every tool with its parameters in one file.
+After a change to this README or to a tool, run `bun run scripts/llms.ts` to rebuild it; `bun test` fails while it is stale.
+
+## License
+
+MIT.
+See [LICENSE](LICENSE).
