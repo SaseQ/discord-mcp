@@ -1,5 +1,6 @@
 import {
   type AllowedMentions,
+  type AnyGuildChannel,
   type Attachment,
   ChannelTypes,
   type CreateMessageOptions,
@@ -41,7 +42,7 @@ export const requireMessageChannel = async (
   if (!MESSAGE_CHANNEL_TYPES.includes(channel.type)) {
     throw new ToolError(`Channel ${channelId} is not a text channel or thread`);
   }
-  return channel;
+  return channel as AnyGuildChannel;
 };
 
 export const jumpUrl = (
@@ -269,7 +270,11 @@ export const repliedTo = (message: Message): string | null =>
     : null;
 
 /** One message with its link, for the tools that return a single message. */
-export const toLinkedMessage = (message: Message) => ({
+export const toLinkedMessage = (
+  message: Message,
+  // Discord sends guild_id only over the gateway, so REST messages need the guild of their channel.
+  guildId: string | null = null,
+) => ({
   ...toMessageItem(message),
-  jumpUrl: jumpUrl(message.guildID ?? null, message.channelID, message.id),
+  jumpUrl: jumpUrl(message.guildID ?? guildId, message.channelID, message.id),
 });

@@ -47,12 +47,30 @@ const discordHistory = (
 /** Channel routes that answer as a text channel, with the given message routes. */
 const textChannel = (channels: Record<string, unknown> = {}): FakeRest => ({
   channels: {
-    get: async () => ({ id: CHANNEL, type: ChannelTypes.GUILD_TEXT }),
+    get: async () => ({
+      id: CHANNEL,
+      type: ChannelTypes.GUILD_TEXT,
+      guildID: "111111111111111111",
+    }),
     ...channels,
   },
 });
 
 describe("send_message", () => {
+  test("the link names the guild of the channel, since REST messages have no guild_id", async () => {
+    const createMessage = recorder(fakeMessage({ guildID: null }));
+    const ctx = fakeContext(textChannel({ createMessage }));
+
+    const result = await callTool(messageTools, ctx, "send_message", {
+      channelId: CHANNEL,
+      message: "hi",
+    });
+
+    expect(result.data).toMatchObject({
+      jumpUrl: `https://discord.com/channels/111111111111111111/${CHANNEL}/200000000000000001`,
+    });
+  });
+
   test("a reply references the replied message and fails when it is gone by default", async () => {
     const createMessage = recorder(fakeMessage());
     const ctx = fakeContext(textChannel({ createMessage }));

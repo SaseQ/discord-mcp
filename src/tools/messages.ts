@@ -146,7 +146,7 @@ export const messageTools: Tool[] = [
       if (args.failIfNotExists !== undefined && !args.replyToMessageId) {
         throw new ToolError("failIfNotExists needs replyToMessageId");
       }
-      await requireMessageChannel(ctx, args.channelId);
+      const channel = await requireMessageChannel(ctx, args.channelId);
       const files = await loadFiles(ctx, args.files);
       const options = messageFields({
         content: args.message,
@@ -167,7 +167,7 @@ export const messageTools: Tool[] = [
             : undefined,
         }),
       );
-      return toLinkedMessage(sent);
+      return toLinkedMessage(sent, channel.guildID);
     },
   }),
   defineTool({
@@ -188,7 +188,7 @@ export const messageTools: Tool[] = [
       if (!args.newMessage && !args.embeds) {
         throw new ToolError("Give newMessage, embeds, or both");
       }
-      await requireMessageChannel(ctx, args.channelId);
+      const channel = await requireMessageChannel(ctx, args.channelId);
       const edited = await ctx.client.rest.channels.editMessage(
         args.channelId,
         args.messageId,
@@ -198,7 +198,7 @@ export const messageTools: Tool[] = [
           allowEveryone: args.allowEveryone,
         }),
       );
-      return toLinkedMessage(edited);
+      return toLinkedMessage(edited, channel.guildID);
     },
   }),
   defineTool({
@@ -299,14 +299,14 @@ export const messageTools: Tool[] = [
     run: async (args, ctx) => {
       if (args.scanLimit !== undefined && !args.includeReplies)
         throw new ToolError("scanLimit needs includeReplies");
-      await requireMessageChannel(ctx, args.channelId);
+      const channel = await requireMessageChannel(ctx, args.channelId);
       const message = await ctx.client.rest.channels.getMessage(
         args.channelId,
         args.messageId,
       );
       const referenced = repliedTo(message) && message.referencedMessage;
       const result = {
-        ...toLinkedMessage(message),
+        ...toLinkedMessage(message, channel.guildID),
         ...(referenced ? { repliedMessage: toMessageItem(referenced) } : {}),
       };
       if (args.attachmentId) {
