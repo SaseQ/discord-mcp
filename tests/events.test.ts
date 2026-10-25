@@ -170,11 +170,9 @@ describe("list_guild_scheduled_events", () => {
         {
           id: EVENT,
           name: "Town hall",
-          description: null,
           entityType: 3,
           status: 1,
           privacyLevel: 2,
-          channelId: null,
           location: "Lobby",
           startTime: "2100-01-01T18:00:00.000Z",
           endTime: "2100-01-01T20:00:00.000Z",

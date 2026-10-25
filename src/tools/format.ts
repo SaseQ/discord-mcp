@@ -7,6 +7,7 @@ import {
   type EmbedOptions,
   type GetChannelMessagesOptions,
   type Message,
+  MessageTypes,
 } from "oceanic.js";
 import { z } from "zod";
 import type { Context } from "../context.ts";
@@ -43,12 +44,6 @@ export const requireMessageChannel = async (
   return channel;
 };
 
-/** The server ID of a guild channel or thread, or `null` for a DM. */
-export const guildIdOf = (channel: object): string | null =>
-  "guildID" in channel && typeof channel.guildID === "string"
-    ? channel.guildID
-    : null;
-
 export const jumpUrl = (
   guildId: string | null,
   channelId: string,
@@ -69,100 +64,60 @@ export const fileFields = {
     .string()
     .min(1)
     .optional()
-    .describe("Absolute path to a local file under DISCORD_MCP_FILE_ROOTS"),
-  fileUrl: z
-    .string()
-    .min(1)
-    .optional()
-    .describe("Public https URL to download the file from"),
-  fileData: z
-    .string()
-    .min(1)
-    .optional()
-    .describe("Base64 file contents, raw or as a data URI"),
+    .describe("Absolute path under DISCORD_MCP_FILE_ROOTS"),
+  fileUrl: z.string().min(1).optional().describe("Public https URL"),
+  fileData: z.string().min(1).optional().describe("Base64 or data URI"),
   fileName: z
     .string()
     .min(1)
     .max(255)
     .optional()
-    .describe("File name shown in Discord. Required with fileData"),
+    .describe("Required with fileData"),
 };
 
 /** One file source. Give exactly one of filePath, fileUrl, or fileData. */
-export const fileSource = z.object(fileFields);
+export const fileSource = z
+  .object(fileFields)
+  .describe("One of filePath, fileUrl, or fileData");
 
-const embedFieldSchema = z.object({
-  name: z.string().min(1).max(256).describe("Field title"),
-  value: z.string().min(1).max(1024).describe("Field text"),
-  inline: z
-    .boolean()
+const isoTime = z.iso.datetime({ offset: true });
+
+// Flat strings for footer, image, thumbnail, and author keep the listed schema two levels shallower than Discord's objects.
+export const embedSchema = z.object({
+  title: z.string().min(1).max(256).optional(),
+  description: z.string().min(1).max(4096).optional(),
+  url: z.url().optional(),
+  color: z
+    .number()
+    .int()
+    .min(0)
+    .max(0xffffff)
     .optional()
-    .describe("Whether the field sits beside the next field"),
+    .describe("RGB integer, such as 5793266"),
+  fields: z
+    .array(
+      z.object({
+        name: z.string().min(1).max(256),
+        value: z.string().min(1).max(1024),
+        inline: z.boolean().optional(),
+      }),
+    )
+    .max(25)
+    .optional(),
+  footer: z.string().min(1).max(2048).optional(),
+  image: z
+    .string()
+    .min(1)
+    .optional()
+    .describe("Image URL, or attachment://<fileName> of an attached file"),
+  thumbnail: z.string().min(1).optional().describe("Small image URL, as image"),
+  author: z.string().min(1).max(256).optional(),
+  authorUrl: z.url().optional(),
+  timestamp: z
+    .string()
+    .refine((v) => isoTime.safeParse(v).success, "must be an ISO 8601 time")
+    .optional(),
 });
-
-export const embedSchema = z
-  .object({
-    title: z.string().min(1).max(256).optional().describe("Embed title"),
-    description: z
-      .string()
-      .min(1)
-      .max(4096)
-      .optional()
-      .describe("Embed body text"),
-    url: z.url().optional().describe("Link that the title opens"),
-    color: z
-      .number()
-      .int()
-      .min(0)
-      .max(0xffffff)
-      .optional()
-      .describe("Colour as an integer, such as 5793266"),
-    fields: z
-      .array(embedFieldSchema)
-      .max(25)
-      .optional()
-      .describe("Up to 25 name and value fields"),
-    footer: z
-      .object({
-        text: z.string().min(1).max(2048).describe("Footer text"),
-      })
-      .optional()
-      .describe("Footer line"),
-    image: z
-      .object({
-        url: z
-          .string()
-          .min(1)
-          .describe(
-            "Image URL, or attachment://<fileName> for an attached file",
-          ),
-      })
-      .optional()
-      .describe("Large image"),
-    thumbnail: z
-      .object({
-        url: z
-          .string()
-          .min(1)
-          .describe(
-            "Image URL, or attachment://<fileName> for an attached file",
-          ),
-      })
-      .optional()
-      .describe("Small image at the top right"),
-    author: z
-      .object({
-        name: z.string().min(1).max(256).describe("Author name"),
-        url: z.url().optional().describe("Link that the author name opens"),
-      })
-      .optional()
-      .describe("Author line"),
-    timestamp: z.iso
-      .datetime()
-      .optional()
-      .describe("ISO 8601 time shown in the embed"),
-  })
-  .describe("A rich embed block");
 
 export type EmbedInput = z.output<typeof embedSchema>;
 
@@ -176,10 +131,14 @@ export const toEmbedOptions = (embed: EmbedInput): EmbedOptions =>
     fields: embed.fields?.map(
       (field): EmbedField => definedOnly({ ...field }) as EmbedField,
     ),
-    footer: embed.footer && { text: embed.footer.text },
-    image: embed.image && { url: embed.image.url },
-    thumbnail: embed.thumbnail && { url: embed.thumbnail.url },
-    author: embed.author && definedOnly({ ...embed.author }),
+    footer: embed.footer === undefined ? undefined : { text: embed.footer },
+    image: embed.image === undefined ? undefined : { url: embed.image },
+    thumbnail:
+      embed.thumbnail === undefined ? undefined : { url: embed.thumbnail },
+    author:
+      embed.author === undefined
+        ? undefined
+        : definedOnly({ name: embed.author, url: embed.authorUrl }),
   }) as EmbedOptions;
 
 export interface MessageFields {
@@ -252,7 +211,6 @@ export interface AttachmentItem {
   size: number;
   contentType: string | null;
   url: string;
-  proxyUrl: string;
 }
 
 export const toAttachmentItem = (attachment: Attachment): AttachmentItem => ({
@@ -261,47 +219,57 @@ export const toAttachmentItem = (attachment: Attachment): AttachmentItem => ({
   size: attachment.size,
   contentType: attachment.contentType ?? null,
   url: attachment.url,
-  proxyUrl: attachment.proxyURL,
 });
 
 export interface MessageItem {
   id: string;
   channelId: string;
-  jumpUrl: string;
   content: string;
   timestamp: string;
   editedTimestamp: string | null;
   author: {
     id: string;
     username: string;
-    globalName: string | null;
-    bot: boolean;
-    nick?: string | null;
+    /** The server nickname or global name, when it differs from the username. */
+    displayName?: string;
+    bot?: true;
   };
-  attachments: AttachmentItem[];
-  embedCount: number;
+  attachments?: AttachmentItem[];
+  embedCount?: number;
   replyTo: string | null;
 }
 
-/** The shape of a message in every read, search, and send result. */
+/** The shape of a message in every list of messages. Empty fields are left out, and so is the link, which the IDs make. */
 export const toMessageItem = (message: Message): MessageItem => {
   const author: MessageItem["author"] = {
     id: message.author.id,
     username: message.author.username,
-    globalName: message.author.globalName,
-    bot: message.author.bot,
   };
-  if (message.member) author.nick = message.member.nick;
+  const shown = message.member?.nick ?? message.author.globalName;
+  if (shown && shown !== message.author.username) author.displayName = shown;
+  if (message.author.bot) author.bot = true;
+  const attachments = message.attachments.toArray().map(toAttachmentItem);
   return {
     id: message.id,
     channelId: message.channelID,
-    jumpUrl: jumpUrl(message.guildID ?? null, message.channelID, message.id),
     content: message.content,
     timestamp: message.timestamp.toISOString(),
     editedTimestamp: message.editedTimestamp?.toISOString() ?? null,
     author,
-    attachments: message.attachments.toArray().map(toAttachmentItem),
-    embedCount: message.embeds.length,
-    replyTo: message.messageReference?.messageID ?? null,
+    ...(attachments.length > 0 ? { attachments } : {}),
+    ...(message.embeds.length > 0 ? { embedCount: message.embeds.length } : {}),
+    replyTo: repliedTo(message),
   };
 };
+
+/** The ID of the message that this one replies to. Forwards and crossposts also carry a reference, but are no reply. */
+export const repliedTo = (message: Message): string | null =>
+  message.type === MessageTypes.REPLY
+    ? (message.messageReference?.messageID ?? null)
+    : null;
+
+/** One message with its link, for the tools that return a single message. */
+export const toLinkedMessage = (message: Message) => ({
+  ...toMessageItem(message),
+  jumpUrl: jumpUrl(message.guildID ?? null, message.channelID, message.id),
+});

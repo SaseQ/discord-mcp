@@ -16,12 +16,12 @@ export const categoryTools: Tool[] = [
   defineTool({
     name: "create_category",
     title: "Create category",
-    description: "Create a channel category in a Discord server.",
+    description: "Create a channel category.",
     group: "categories",
     access: "write",
     input: z.object({
       guildId,
-      name: categoryName.describe("Category name"),
+      name: categoryName,
       reason: auditReason,
     }),
     run: async (args, ctx) => {
@@ -36,8 +36,7 @@ export const categoryTools: Tool[] = [
   defineTool({
     name: "delete_category",
     title: "Delete category",
-    description:
-      "Delete a channel category in a Discord server. The channels inside it are kept.",
+    description: "Delete a channel category. Its channels are kept.",
     group: "categories",
     access: "destructive",
     input: z.object({
@@ -59,20 +58,14 @@ export const categoryTools: Tool[] = [
   defineTool({
     name: "edit_category",
     title: "Edit category",
-    description:
-      "Rename a channel category or change its position. At least one of name or position is required.",
+    description: "Rename or reorder a channel category.",
     group: "categories",
     access: "write",
     input: z.object({
       guildId,
       categoryId: snowflake("Category ID"),
-      name: categoryName.optional().describe("New category name"),
-      position: z
-        .number()
-        .int()
-        .min(0)
-        .optional()
-        .describe("New position in channel list"),
+      name: categoryName.optional(),
+      position: z.number().int().min(0).optional(),
       reason: auditReason,
     }),
     run: async (args, ctx) => {
@@ -101,12 +94,12 @@ export const categoryTools: Tool[] = [
     name: "find_category",
     title: "Find category",
     description:
-      "Find a channel category by name in a Discord server. The name is matched without case. It fails when more than one category has the name.",
+      "Find a channel category by name, case-insensitive. Fails on duplicate names.",
     group: "categories",
     access: "read",
     input: z.object({
       guildId,
-      categoryName: categoryName.describe("Category name to find"),
+      categoryName,
     }),
     run: async (args, ctx) => {
       const channels = await ctx.client.rest.guilds.getChannels(
@@ -134,7 +127,7 @@ export const categoryTools: Tool[] = [
     name: "list_channels_in_category",
     title: "List channels in category",
     description:
-      "List the channels that sit directly under a channel category. Threads are not included.",
+      "List the channels directly under a category, without threads.",
     group: "categories",
     access: "read",
     input: z.object({

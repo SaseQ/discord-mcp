@@ -64,8 +64,7 @@ export const emojiTools = [
   defineTool({
     name: "list_emojis",
     title: "List emojis",
-    description:
-      "Lists the custom emojis of a server with their ID, name, animated flag, and the roles that may use them.",
+    description: "List custom emojis with ID, name, animated flag, and roles.",
     group: "emojis",
     access: "read",
     input: z.object({ guildId }),
@@ -87,7 +86,7 @@ export const emojiTools = [
     name: "get_emoji_details",
     title: "Get emoji details",
     description:
-      "Gets the details of a custom emoji: its name, animated, managed, and available flags, its image URL, and the roles that may use it.",
+      "Get a custom emoji: flags, image URL, and roles that may use it.",
     group: "emojis",
     access: "read",
     input: z.object({
@@ -113,39 +112,19 @@ export const emojiTools = [
     name: "create_emoji",
     title: "Create emoji",
     description:
-      "Uploads a custom emoji to a server. Give the image as base64 (a Data URI or raw), as a public https URL, or as a file path under DISCORD_MCP_FILE_ROOTS. PNG, JPEG, GIF, and WebP up to 256 KiB.",
+      "Upload a custom emoji from base64, an https URL, or a file path. PNG, JPEG, GIF, or WebP up to 256 KiB.",
     group: "emojis",
     access: "write",
     input: z.object({
       guildId,
-      name: z
-        .string()
-        .min(1)
-        .max(100)
-        .describe(
-          "Emoji name (2 to 32 letters, digits, or underscores; spaces become underscores)",
-        ),
-      image: z
-        .string()
-        .optional()
-        .describe(
-          "Image as a base64 Data URI (e.g. data:image/png;base64,...) or raw base64",
-        ),
-      imageUrl: z
-        .string()
-        .max(2048)
-        .optional()
-        .describe("Public https URL of the image"),
+      name: z.string().min(1).max(100).describe("2-32 letters, digits, or _"),
+      image: z.string().optional().describe("Base64 or data URI"),
+      imageUrl: z.string().max(2048).optional().describe("Public https URL"),
       filePath: z
         .string()
         .optional()
-        .describe("Absolute path of an image under DISCORD_MCP_FILE_ROOTS"),
-      roles: z
-        .string()
-        .optional()
-        .describe(
-          "Comma-separated role IDs that may use the emoji. Empty means everyone.",
-        ),
+        .describe("Absolute path under DISCORD_MCP_FILE_ROOTS"),
+      roles: z.string().optional().describe("Comma-separated role IDs"),
       reason: auditReason,
     }),
     run: async (args, ctx) => {
@@ -171,12 +150,7 @@ export const emojiTools = [
         roles: roleIds,
         ...reasonOption(args.reason),
       });
-      return {
-        id: emoji.id,
-        name: emoji.name,
-        animated: emoji.animated ?? false,
-        imageUrl: emojiImageUrl(emoji),
-      };
+      return { id: emoji.id, name: emoji.name };
     },
   }),
 
@@ -184,7 +158,7 @@ export const emojiTools = [
     name: "edit_emoji",
     title: "Edit emoji",
     description:
-      "Renames a custom emoji or changes the roles that may use it. An empty roles value lets everyone use it.",
+      "Rename a custom emoji or change its roles. Empty roles means everyone.",
     group: "emojis",
     access: "write",
     input: z.object({
@@ -195,13 +169,8 @@ export const emojiTools = [
         .min(1)
         .max(100)
         .optional()
-        .describe("New emoji name (2 to 32 letters, digits, or underscores)"),
-      roles: z
-        .string()
-        .optional()
-        .describe(
-          "Comma-separated role IDs that may use the emoji. Empty string lets everyone use it.",
-        ),
+        .describe("2-32 letters, digits, or _"),
+      roles: z.string().optional().describe("Comma-separated role IDs"),
       reason: auditReason,
     }),
     run: async (args, ctx) => {
@@ -230,7 +199,7 @@ export const emojiTools = [
   defineTool({
     name: "delete_emoji",
     title: "Delete emoji",
-    description: "Permanently deletes a custom emoji from a server.",
+    description: "Delete a custom emoji.",
     group: "emojis",
     access: "destructive",
     input: z.object({

@@ -1,7 +1,7 @@
-import { ChannelTypes } from "oceanic.js";
+import { type AnyThreadChannel, ChannelTypes } from "oceanic.js";
 import { z } from "zod";
 import type { Context } from "../context.ts";
-import { defineTool, type Tool, ToolError } from "../tool.ts";
+import { defineMergedTool, defineTool, type Tool, ToolError } from "../tool.ts";
 import { auditReason, guildId, snowflake } from "./schemas.ts";
 import { channelTypeName, definedOnly, hasStatus } from "./util.ts";
 
@@ -9,6 +9,13 @@ import { channelTypeName, definedOnly, hasStatus } from "./util.ts";
 export type GuildChannel = Awaited<
   ReturnType<Context["client"]["rest"]["guilds"]["getChannels"]>
 >[number];
+
+const isThread = (channel: {
+  type: ChannelTypes;
+}): channel is AnyThreadChannel =>
+  channel.type === ChannelTypes.ANNOUNCEMENT_THREAD ||
+  channel.type === ChannelTypes.PUBLIC_THREAD ||
+  channel.type === ChannelTypes.PRIVATE_THREAD;
 
 /** The channel with the given ID, which must be in the server whose channels are given. */
 export const findChannel = (
@@ -74,9 +81,7 @@ const parentFor = (
 const parentParam = z
   .union([snowflake("Category ID"), z.literal("")])
   .optional()
-  .describe(
-    "Category ID. An empty string removes the channel from its category.",
-  );
+  .describe("Empty string removes the category");
 
 const slowmode = z
   .number()
@@ -84,22 +89,24 @@ const slowmode = z
   .min(0)
   .max(21600)
   .optional()
-  .describe("Slowmode in seconds (0-21600)");
+  .describe("Seconds");
 
-const position = z
-  .number()
-  .int()
-  .min(0)
-  .optional()
-  .describe("Position in channel list");
+const position = z.number().int().min(0).optional();
 
 const channelName = z.string().min(1).max(100);
+
+const CHANNEL_TYPES = {
+  text: ChannelTypes.GUILD_TEXT,
+  voice: ChannelTypes.GUILD_VOICE,
+  stage: ChannelTypes.GUILD_STAGE_VOICE,
+  forum: ChannelTypes.GUILD_FORUM,
+} as const;
 
 export const channelTools: Tool[] = [
   defineTool({
     name: "delete_channel",
     title: "Delete channel",
-    description: "Delete a channel of a Discord server.",
+    description: "Delete a channel.",
     group: "channels",
     access: "destructive",
     input: z.object({
@@ -118,34 +125,84 @@ export const channelTools: Tool[] = [
       return { deleted: true, ...describeChannel(channel) };
     },
   }),
-  defineTool({
-    name: "create_text_channel",
-    title: "Create text channel",
-    description: "Create a text channel in a Discord server.",
+  defineMergedTool({
+    name: "create_channel",
+    title: "Create channel",
+    description: "Create a channel, optionally in a category.",
     group: "channels",
-    access: "write",
+    key: "type",
+    parts: [
+      {
+        name: "create_text_channel",
+        group: "channels",
+        access: "write",
+        value: "text",
+        note: "text takes topic (at most 1024 characters), nsfw, and slowmode.",
+        params: ["topic", "nsfw", "slowmode"],
+      },
+      {
+        name: "create_voice_channel",
+        group: "voice",
+        access: "write",
+        value: "voice",
+        note: "voice takes bitrate and userLimit.",
+        params: ["bitrate", "userLimit"],
+      },
+      {
+        name: "create_stage_channel",
+        group: "voice",
+        access: "write",
+        value: "stage",
+        note: "stage takes bitrate.",
+        params: ["bitrate"],
+      },
+      {
+        name: "create_forum_channel",
+        group: "forums",
+        access: "write",
+        value: "forum",
+        note: "forum takes topic as the post guidelines, nsfw, and slowmode for new posts.",
+        params: ["topic", "nsfw", "slowmode"],
+      },
+    ],
     input: z.object({
+      type: z.enum(["text", "voice", "stage", "forum"]),
       guildId,
-      name: channelName.describe("Channel name"),
-      categoryId: snowflake("Category ID")
-        .optional()
-        .describe("Category ID to create the channel in"),
-      topic: z.string().max(1024).optional().describe("Channel topic"),
-      nsfw: z.boolean().optional().describe("Whether the channel is NSFW"),
+      name: channelName,
+      categoryId: snowflake("Category ID").optional(),
+      topic: z.string().max(4096).optional(),
+      nsfw: z.boolean().optional(),
       slowmode,
       position,
+      bitrate: z
+        .number()
+        .int()
+        .min(8000)
+        .optional()
+        .describe("Bits per second"),
+      userLimit: z
+        .number()
+        .int()
+        .min(0)
+        .max(99)
+        .optional()
+        .describe("0 means unlimited"),
       reason: auditReason,
     }),
     run: async (args, ctx) => {
+      if (args.type === "text" && (args.topic?.length ?? 0) > 1024)
+        throw new ToolError("A text channel topic is at most 1024 characters");
       const id = ctx.guildId(args.guildId);
-      const channels = await ctx.client.rest.guilds.getChannels(id);
       const parentID =
         args.categoryId === undefined
           ? undefined
-          : findCategory(channels, args.categoryId).id;
+          : findCategory(
+              await ctx.client.rest.guilds.getChannels(id),
+              args.categoryId,
+            ).id;
       const channel = await ctx.client.rest.guilds.createChannel(
         id,
-        ChannelTypes.GUILD_TEXT,
+        CHANNEL_TYPES[args.type],
         {
           name: args.name,
           ...definedOnly({
@@ -154,6 +211,8 @@ export const channelTools: Tool[] = [
             nsfw: args.nsfw,
             rateLimitPerUser: args.slowmode,
             position: args.position,
+            bitrate: args.bitrate,
+            userLimit: args.userLimit,
             reason: args.reason,
           }),
         },
@@ -165,12 +224,12 @@ export const channelTools: Tool[] = [
     name: "find_channel",
     title: "Find channel",
     description:
-      "Find channels by name in a Discord server. The name is matched without case, and every match is returned.",
+      "Find channels by name, case-insensitive. Returns every match.",
     group: "channels",
     access: "read",
     input: z.object({
       guildId,
-      channelName: channelName.describe("Channel name to find"),
+      channelName,
     }),
     run: async (args, ctx) => {
       const channels = await ctx.client.rest.guilds.getChannels(
@@ -186,8 +245,7 @@ export const channelTools: Tool[] = [
   defineTool({
     name: "list_channels",
     title: "List channels",
-    description:
-      "List the channels of a Discord server. Threads are not included.",
+    description: "List the server's channels. Excludes threads.",
     group: "channels",
     access: "read",
     input: z.object({ guildId }),
@@ -200,15 +258,15 @@ export const channelTools: Tool[] = [
     name: "edit_text_channel",
     title: "Edit text channel",
     description:
-      "Edit a text or announcement channel: name, topic, NSFW, slowmode, category, or position. Only the given fields change.",
+      "Edit a text or announcement channel: name, topic, NSFW, slowmode, category, position. Only given fields change.",
     group: "channels",
     access: "write",
     input: z.object({
       guildId,
       channelId: snowflake("Channel ID"),
-      name: channelName.optional().describe("New channel name"),
-      topic: z.string().max(1024).optional().describe("New channel topic"),
-      nsfw: z.boolean().optional().describe("Whether the channel is NSFW"),
+      name: channelName.optional(),
+      topic: z.string().max(1024).optional(),
+      nsfw: z.boolean().optional(),
       slowmode,
       categoryId: parentParam,
       position,
@@ -253,18 +311,39 @@ export const channelTools: Tool[] = [
     name: "get_channel_info",
     title: "Get channel info",
     description:
-      "Get the details of a channel of a Discord server, including when it was created.",
+      "Get channel or thread details with creation time. For a thread: parent, owner, archived, locked, message and member counts.",
     group: "channels",
     access: "read",
     input: z.object({ guildId, channelId: snowflake("Channel ID") }),
     run: async (args, ctx) => {
-      const channels = await ctx.client.rest.guilds.getChannels(
-        ctx.guildId(args.guildId),
+      const id = ctx.guildId(args.guildId);
+      const channels = await ctx.client.rest.guilds.getChannels(id);
+      const channel = channels.find((c) => c.id === args.channelId);
+      if (channel) {
+        return {
+          ...describeChannel(channel),
+          createdAt: channel.createdAt.toISOString(),
+        };
+      }
+      // The guild channel list leaves out threads, so look the ID up directly.
+      const thread = await onChannel(args.channelId, () =>
+        ctx.client.rest.channels.get(args.channelId),
       );
-      const channel = findChannel(channels, args.channelId);
+      if (!isThread(thread) || thread.guildID !== id)
+        throw new ToolError(
+          `Channel ${args.channelId} was not found in this server`,
+        );
       return {
-        ...describeChannel(channel),
-        createdAt: channel.createdAt.toISOString(),
+        id: thread.id,
+        name: thread.name,
+        type: channelTypeName(thread.type),
+        parentId: thread.parentID,
+        ownerId: thread.ownerID,
+        archived: thread.threadMetadata.archived,
+        locked: thread.threadMetadata.locked,
+        messageCount: thread.messageCount,
+        memberCount: thread.memberCount,
+        createdAt: thread.createdAt.toISOString(),
       };
     },
   }),
@@ -272,7 +351,7 @@ export const channelTools: Tool[] = [
     name: "move_channel",
     title: "Move channel",
     description:
-      "Move a channel to another category, or out of its category, and change its position. Categories cannot be moved.",
+      "Move a channel to another category or out of its category, or change its position. Not for categories.",
     group: "channels",
     access: "write",
     input: z.object({

@@ -20,9 +20,6 @@ interface Candidate {
 
 const SNOWFLAKE = /^\d{17,20}$/;
 
-const displayName = (member: Member) =>
-  member.nick ?? member.user.globalName ?? member.user.username;
-
 /** Ranks the members that Discord returned for a query, with exact matches first. */
 const rankMembers = (members: Member[], query: string): Candidate[] => {
   const q = query.toLowerCase();
@@ -48,67 +45,29 @@ const summarize = (candidate: Candidate) => ({
   username: candidate.member.user.username,
   globalName: candidate.member.user.globalName,
   nick: candidate.member.nick,
-  displayName: displayName(candidate.member),
-  bot: candidate.member.user.bot,
-  matches: candidate.matches,
+  ...(candidate.member.user.bot ? { bot: true } : {}),
+  matched: candidate.matches.map((m) => m.field),
   exact: candidate.exact,
 });
 
-/** Splits `name#discriminator` into its parts. */
+/** Splits `name#discriminator` into its parts, and keeps a query such as `C#` or `Team #1a` whole. */
 const splitUsername = (username: string) => {
-  const idx = username.lastIndexOf("#");
-  if (idx < 0) return { name: username.trim(), discriminator: undefined };
-  return {
-    name: username.slice(0, idx).trim(),
-    discriminator: username.slice(idx + 1).trim() || undefined,
-  };
+  const match = /^(.*)#(\d{4}|0)$/.exec(username.trim());
+  if (!match) return { name: username.trim(), discriminator: undefined };
+  return { name: match[1]?.trim() ?? "", discriminator: match[2] };
 };
 
 export const memberTools = [
   defineTool({
-    name: "get_user_id_by_name",
-    title: "Get user ID by name",
-    description:
-      "Finds members of a server whose username, global display name, or server nickname matches, and returns their user IDs for <@id> mentions. Exact matches come first. Accepts username#discriminator to narrow the search.",
-    group: "members",
-    access: "read",
-    input: z.object({
-      username: z
-        .string()
-        .min(1)
-        .describe("Username, display name, or nickname to search for"),
-      guildId,
-    }),
-    run: async (args, ctx) => {
-      const { name, discriminator } = splitUsername(args.username);
-      if (!name)
-        throw new ToolError("username needs a name before the #discriminator");
-      const id = ctx.guildId(args.guildId);
-      const found = await ctx.client.rest.guilds.searchMembers(id, {
-        query: name,
-        limit: 100,
-      });
-      const candidates = rankMembers(found, name).filter(
-        (c) => !discriminator || c.member.user.discriminator === discriminator,
-      );
-      if (candidates.length === 0)
-        throw new ToolError(
-          `No member of this server matches ${args.username}`,
-        );
-      return { candidates: candidates.map(summarize) };
-    },
-  }),
-
-  defineTool({
     name: "get_member_by_id",
     title: "Get member by ID",
     description:
-      "Gets a server member by user ID: names, bot flag, join date, roles with names, and the timeout end time if one is active.",
+      "Get a server member by user ID: names, join date, roles with names, and the timeout end if one is active.",
     group: "members",
     access: "read",
     input: z.object({
       guildId,
-      userId: snowflake("User ID"),
+      userId: snowflake("userId"),
     }),
     run: async (args, ctx) => {
       const id = ctx.guildId(args.guildId);
@@ -122,8 +81,7 @@ export const memberTools = [
         username: member.user.username,
         globalName: member.user.globalName,
         nick: member.nick,
-        displayName: displayName(member),
-        bot: member.user.bot,
+        ...(member.user.bot ? { bot: true } : {}),
         joinedAt: member.joinedAt?.toISOString() ?? null,
         roles: member.roles.map((roleId) => ({
           id: roleId,
@@ -138,19 +96,13 @@ export const memberTools = [
     name: "search_members",
     title: "Search members",
     description:
-      "Searches server members by username, global display name, or nickname. A query that is a user ID returns that member exactly.",
+      "Find server members, and their user IDs for <@id> mentions, by username, display name, nickname, name#discriminator, or user ID. Exact matches come first.",
     group: "members",
     access: "read",
     input: z.object({
       guildId,
-      query: z.string().min(1).describe("Name or user ID to search for"),
-      limit: z
-        .number()
-        .int()
-        .min(1)
-        .max(100)
-        .default(25)
-        .describe("Maximum number of members to return (1-100, default 25)"),
+      query: z.string().min(1),
+      limit: z.number().int().min(1).max(100).default(25),
     }),
     run: async (args, ctx) => {
       const id = ctx.guildId(args.guildId);
@@ -171,11 +123,21 @@ export const memberTools = [
           if (!hasStatus(error, 404)) throw error;
         }
       }
+      const { name, discriminator } = splitUsername(args.query);
+      if (!name)
+        throw new ToolError("query needs a name before the #discriminator");
       const found = await ctx.client.rest.guilds.searchMembers(id, {
-        query: args.query,
-        limit: args.limit,
+        query: name,
+        // A discriminator filters after the search, so the search fetches the most that Discord allows.
+        limit: discriminator ? 100 : args.limit,
       });
-      return { members: rankMembers(found, args.query).map(summarize) };
+      const members = rankMembers(found, name)
+        .filter(
+          (c) =>
+            !discriminator || c.member.user.discriminator === discriminator,
+        )
+        .slice(0, args.limit);
+      return { members: members.map(summarize) };
     },
   }),
 
@@ -183,23 +145,13 @@ export const memberTools = [
     name: "list_guild_members",
     title: "List server members",
     description:
-      "Lists members of a server, one page at a time. Needs the Server Members privileged intent enabled in the Discord Developer Portal. Pass nextAfter as after to get the next page.",
+      "List server members, one page at a time; pass nextAfter as after for the next page. Needs the Server Members privileged intent.",
     group: "members",
     access: "read",
     input: z.object({
       guildId,
-      limit: z
-        .number()
-        .int()
-        .min(1)
-        .max(1000)
-        .default(100)
-        .describe("Members per page (1-1000, default 100)"),
-      after: snowflake("After user ID")
-        .optional()
-        .describe(
-          "User ID to start after, from nextAfter of the previous page",
-        ),
+      limit: z.number().int().min(1).max(1000).default(100),
+      after: snowflake("after").optional(),
     }),
     run: async (args, ctx) => {
       const id = ctx.guildId(args.guildId);
@@ -222,8 +174,7 @@ export const memberTools = [
           username: member.user.username,
           globalName: member.user.globalName,
           nick: member.nick,
-          displayName: displayName(member),
-          bot: member.user.bot,
+          ...(member.user.bot ? { bot: true } : {}),
           joinedAt: member.joinedAt?.toISOString() ?? null,
         })),
         nextAfter: members.length === args.limit && last ? last.user.id : null,

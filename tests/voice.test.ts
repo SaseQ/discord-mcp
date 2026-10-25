@@ -1,5 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
 import { ChannelTypes } from "oceanic.js";
+import { channelTools } from "../src/tools/channels.ts";
+import { moderationTools } from "../src/tools/moderation.ts";
 import { voiceTools } from "../src/tools/voice.ts";
 import { callTool, DEFAULT_GUILD, fakeContext, restError } from "./harness.ts";
 
@@ -21,14 +23,15 @@ const guildChannels = () => [
   channel(CATEGORY, ChannelTypes.GUILD_CATEGORY, "Voice"),
 ];
 
-describe("move_member", () => {
+describe("moderate_member move", () => {
   test("rejects a target channel that is not a voice or stage channel", async () => {
     const editMember = mock(async () => undefined);
     const ctx = fakeContext({
       guilds: { getChannels: async () => guildChannels(), editMember },
     });
 
-    const result = await callTool(voiceTools, ctx, "move_member", {
+    const result = await callTool(moderationTools, ctx, "moderate_member", {
+      action: "move",
       userId: USER,
       channelId: TEXT,
     });
@@ -47,7 +50,8 @@ describe("move_member", () => {
       },
     });
 
-    const result = await callTool(voiceTools, ctx, "move_member", {
+    const result = await callTool(moderationTools, ctx, "moderate_member", {
+      action: "move",
       userId: USER,
       channelId: VOICE,
     });
@@ -70,7 +74,8 @@ describe("move_member", () => {
       },
     });
 
-    const result = await callTool(voiceTools, ctx, "move_member", {
+    const result = await callTool(moderationTools, ctx, "moderate_member", {
+      action: "move",
       userId: USER,
       channelId: VOICE,
     });
@@ -80,7 +85,7 @@ describe("move_member", () => {
   });
 });
 
-describe("disconnect_member", () => {
+describe("moderate_member disconnect", () => {
   test("sends a null channel to disconnect the member", async () => {
     const editMember = mock(async () => undefined);
     const ctx = fakeContext({
@@ -90,7 +95,8 @@ describe("disconnect_member", () => {
       },
     });
 
-    const result = await callTool(voiceTools, ctx, "disconnect_member", {
+    const result = await callTool(moderationTools, ctx, "moderate_member", {
+      action: "disconnect",
       userId: USER,
     });
 
@@ -123,7 +129,7 @@ describe("modify_voice_state", () => {
   });
 });
 
-describe("create_voice_channel", () => {
+describe("create_channel voice", () => {
   test("rejects a category ID that is not a category of the server", async () => {
     const createChannel = mock(async () =>
       channel(VOICE, ChannelTypes.GUILD_VOICE),
@@ -132,7 +138,8 @@ describe("create_voice_channel", () => {
       guilds: { getChannels: async () => guildChannels(), createChannel },
     });
 
-    const result = await callTool(voiceTools, ctx, "create_voice_channel", {
+    const result = await callTool(channelTools, ctx, "create_channel", {
+      type: "voice",
       name: "music",
       categoryId: TEXT,
     });
@@ -149,7 +156,8 @@ describe("create_voice_channel", () => {
       guilds: { getChannels: async () => guildChannels(), createChannel },
     });
 
-    const result = await callTool(voiceTools, ctx, "create_voice_channel", {
+    const result = await callTool(channelTools, ctx, "create_channel", {
+      type: "voice",
       name: "music",
       categoryId: CATEGORY,
       userLimit: 5,
@@ -162,6 +170,51 @@ describe("create_voice_channel", () => {
       { name: "music", parentID: CATEGORY, userLimit: 5 },
     );
     expect(result.data).toEqual({ id: VOICE, name: "music", type: "voice" });
+  });
+});
+
+describe("create_channel stage type", () => {
+  test("creates a stage channel with the bitrate", async () => {
+    const createChannel = mock(async () =>
+      channel(VOICE, ChannelTypes.GUILD_STAGE_VOICE, "town hall"),
+    );
+    const ctx = fakeContext({
+      guilds: { getChannels: async () => guildChannels(), createChannel },
+    });
+
+    const result = await callTool(channelTools, ctx, "create_channel", {
+      name: "town hall",
+      type: "stage",
+      bitrate: 64000,
+    });
+
+    expect(result.isError).toBe(false);
+    expect(createChannel).toHaveBeenCalledWith(
+      DEFAULT_GUILD,
+      ChannelTypes.GUILD_STAGE_VOICE,
+      { name: "town hall", bitrate: 64000 },
+    );
+    expect(result.data).toEqual({
+      id: VOICE,
+      name: "town hall",
+      type: "stage",
+    });
+  });
+
+  test("rejects a user limit on a stage channel", async () => {
+    const createChannel = mock(async () =>
+      channel(VOICE, ChannelTypes.GUILD_STAGE_VOICE),
+    );
+    const ctx = fakeContext({ guilds: { createChannel } });
+
+    const result = await callTool(channelTools, ctx, "create_channel", {
+      name: "town hall",
+      type: "stage",
+      userLimit: 5,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(createChannel).not.toHaveBeenCalled();
   });
 });
 

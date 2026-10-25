@@ -249,7 +249,7 @@ describe("edit_text_channel", () => {
   });
 });
 
-describe("create_text_channel", () => {
+describe("create_channel text", () => {
   test("creates the channel under a category of the server", async () => {
     const create = recorder(channel({ id: TEXT, name: "news" }));
     const ctx = fakeContext({
@@ -259,7 +259,8 @@ describe("create_text_channel", () => {
       },
     });
 
-    const result = await callTool(channelTools, ctx, "create_text_channel", {
+    const result = await callTool(channelTools, ctx, "create_channel", {
+      type: "text",
       name: "news",
       categoryId: CATEGORY,
       slowmode: 5,
@@ -284,12 +285,87 @@ describe("create_text_channel", () => {
       },
     });
 
-    const result = await callTool(channelTools, ctx, "create_text_channel", {
+    const result = await callTool(channelTools, ctx, "create_channel", {
+      type: "text",
       name: "news",
       categoryId: VOICE,
     });
 
     expect(result.isError).toBe(true);
+    expect(create.calls).toEqual([]);
+  });
+});
+
+describe("create_channel forum", () => {
+  test("creates a forum channel with the topic, NSFW flag, and slowmode", async () => {
+    const create = recorder(
+      channel({ id: TEXT, name: "help", type: ChannelTypes.GUILD_FORUM }),
+    );
+    const ctx = fakeContext({
+      guilds: {
+        getChannels: async () => guildChannels,
+        createChannel: create,
+      },
+    });
+
+    const result = await callTool(channelTools, ctx, "create_channel", {
+      type: "forum",
+      name: "help",
+      topic: "Read the pins first",
+      nsfw: true,
+      slowmode: 30,
+    });
+
+    expect(result.isError).toBe(false);
+    expect(create.calls).toEqual([
+      [
+        DEFAULT_GUILD,
+        ChannelTypes.GUILD_FORUM,
+        {
+          name: "help",
+          topic: "Read the pins first",
+          nsfw: true,
+          rateLimitPerUser: 30,
+        },
+      ],
+    ]);
+  });
+});
+
+describe("create_channel argument checks", () => {
+  test("rejects a topic on a voice channel before any REST call", async () => {
+    const getChannels = recorder(guildChannels);
+    const create = recorder(channel({ id: VOICE }));
+    const ctx = fakeContext({
+      guilds: { getChannels, createChannel: create },
+    });
+
+    const result = await callTool(channelTools, ctx, "create_channel", {
+      type: "voice",
+      name: "music",
+      topic: "tunes",
+    });
+
+    expect(result.isError).toBe(true);
+    expect(getChannels.calls).toEqual([]);
+    expect(create.calls).toEqual([]);
+  });
+
+  test("rejects a bitrate on a text channel", async () => {
+    const getChannels = recorder(guildChannels);
+    const create = recorder(channel({ id: TEXT }));
+    const ctx = fakeContext({
+      guilds: { getChannels, createChannel: create },
+    });
+
+    const result = await callTool(channelTools, ctx, "create_channel", {
+      type: "text",
+      name: "news",
+      bitrate: 64000,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(getChannels.calls).toEqual([]);
     expect(create.calls).toEqual([]);
   });
 });
@@ -313,6 +389,67 @@ describe("get_channel_info", () => {
         createdAt: "2020-01-01T00:00:00.000Z",
       }),
     );
+  });
+});
+
+describe("get_channel_info on a thread", () => {
+  const THREAD = "600000000000000001";
+
+  test("returns the thread fields", async () => {
+    const get = recorder({
+      id: THREAD,
+      name: "release notes",
+      type: ChannelTypes.PUBLIC_THREAD,
+      guildID: DEFAULT_GUILD,
+      parentID: TEXT,
+      ownerID: "400000000000000001",
+      messageCount: 3,
+      memberCount: 2,
+      createdAt: new Date("2024-05-06T07:08:09.000Z"),
+      threadMetadata: { archived: true, locked: false },
+    });
+    const ctx = fakeContext({
+      guilds: { getChannels: async () => guildChannels },
+      channels: { get },
+    });
+
+    const result = await callTool(channelTools, ctx, "get_channel_info", {
+      channelId: THREAD,
+    });
+
+    expect(result.isError).toBe(false);
+    expect(get.calls).toEqual([[THREAD]]);
+    expect(result.data).toEqual({
+      id: THREAD,
+      name: "release notes",
+      type: "public_thread",
+      parentId: TEXT,
+      ownerId: "400000000000000001",
+      archived: true,
+      locked: false,
+      messageCount: 3,
+      memberCount: 2,
+      createdAt: "2024-05-06T07:08:09.000Z",
+    });
+  });
+
+  test("rejects a thread of another server", async () => {
+    const ctx = fakeContext({
+      guilds: { getChannels: async () => guildChannels },
+      channels: {
+        get: async () => ({
+          id: THREAD,
+          type: ChannelTypes.PUBLIC_THREAD,
+          guildID: "999999999999999990",
+        }),
+      },
+    });
+
+    const result = await callTool(channelTools, ctx, "get_channel_info", {
+      channelId: THREAD,
+    });
+
+    expect(result.isError).toBe(true);
   });
 });
 

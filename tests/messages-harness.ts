@@ -3,6 +3,7 @@ export const fakeMessage = (overrides: Record<string, unknown> = {}) => ({
   id: "200000000000000001",
   channelID: "300000000000000001",
   guildID: "111111111111111111",
+  type: 0,
   content: "hello",
   timestamp: new Date("2026-01-02T03:04:05.000Z"),
   editedTimestamp: null,

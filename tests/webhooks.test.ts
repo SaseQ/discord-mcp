@@ -81,7 +81,7 @@ describe("send_webhook_message", () => {
     });
     expect(result).toEqual({
       isError: false,
-      data: { id: MESSAGE, channelId: null, link: null },
+      data: { id: MESSAGE },
     });
     const options = execute.calls[0]?.[2] as {
       allowedMentions: { everyone: boolean; roles: boolean };

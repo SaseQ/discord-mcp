@@ -1,20 +1,19 @@
 import { DiscordRESTError, type Message } from "oceanic.js";
 import { z } from "zod";
-import { defineTool, type Tool, ToolError } from "../tool.ts";
+import type { Context } from "../context.ts";
+import { defineMergedTool, defineTool, type Tool, ToolError } from "../tool.ts";
 import {
   definedOnly,
   embedSchema,
-  fileFields,
   fileSource,
-  guildIdOf,
   historyOptions,
-  jumpUrl,
   loadFiles,
   MAX_CONTENT_LENGTH,
   MAX_READ_LIMIT,
   messageFields,
+  repliedTo,
   requireMessageChannel,
-  toAttachmentItem,
+  toLinkedMessage,
   toMessageItem,
 } from "./format.ts";
 import { guildId, snowflake } from "./schemas.ts";
@@ -27,22 +26,23 @@ export const countParam = z
   .min(1)
   .max(MAX_READ_LIMIT)
   .optional()
-  .describe(
-    `Number of messages to return, from 1 to ${MAX_READ_LIMIT}. Defaults to ${MAX_READ_LIMIT}`,
-  );
-export const beforeParam = snowflake("Message ID")
-  .optional()
-  .describe("Return messages sent before this message ID");
-export const afterParam = snowflake("Message ID")
-  .optional()
-  .describe("Return messages sent after this message ID");
-export const aroundParam = snowflake("Message ID")
-  .optional()
-  .describe("Return messages around this message ID");
+  .describe(`Default ${MAX_READ_LIMIT}`);
+export const beforeParam = snowflake("before").optional();
+export const afterParam = snowflake("after").optional();
+export const aroundParam = snowflake("around").optional();
 export const allowEveryoneParam = z
   .boolean()
   .optional()
-  .describe("Let @everyone, @here, and role mentions ping. Defaults to false");
+  .describe("Let @everyone, @here, and roles ping");
+
+const DEFAULT_SCAN = 500;
+const scanParam = z
+  .number()
+  .int()
+  .min(1)
+  .max(1000)
+  .optional()
+  .describe(`Messages to scan, default ${DEFAULT_SCAN}`);
 
 /** The Discord search filters that Oceanic types. */
 const SEARCH_HAS = [
@@ -72,41 +72,74 @@ const searchFailure = (error: unknown): unknown => {
   return error;
 };
 
+const byIdAscending = (a: Message, b: Message) =>
+  BigInt(a.id) < BigInt(b.id) ? -1 : 1;
+
+/** Reads up to `limit` messages from a cursor, newest first, plus one that tells whether the scan reached the end of the history. */
+const scanHistory = async (
+  ctx: Context,
+  channelId: string,
+  cursor: { before?: string | undefined; after?: string | undefined },
+  limit: number,
+) => {
+  // Oceanic pages `after` from the oldest message of each page, which Discord returns newest first, so the scan pages itself.
+  const seen = new Map<string, Message>();
+  let { before, after } = cursor;
+  while (seen.size <= limit) {
+    const want = Math.min(MAX_READ_LIMIT, limit + 1 - seen.size);
+    const page = await ctx.client.rest.channels.getMessages(
+      channelId,
+      definedOnly({ limit: want, before, after }),
+    );
+    const size = seen.size;
+    for (const message of page) seen.set(message.id, message);
+    if (page.length < want || seen.size === size) break;
+    const sorted = [...page].sort(byIdAscending);
+    if (after !== undefined) after = sorted.at(-1)?.id;
+    else before = sorted[0]?.id;
+  }
+  const ascending = [...seen.values()].sort(byIdAscending);
+  const kept =
+    cursor.after === undefined
+      ? ascending.slice(-limit)
+      : ascending.slice(0, limit);
+  return { messages: kept.reverse(), complete: seen.size <= limit };
+};
+
 export const messageTools: Tool[] = [
-  defineTool({
+  defineMergedTool({
     name: "send_message",
     title: "Send message",
     description:
-      "Send a message to a channel or thread. Give text, embeds, or files. @everyone, @here, and roles do not ping unless allowEveryone is true.",
+      "Send a message to a channel or thread: text, embeds, or a reply. @everyone, @here, and roles do not ping unless allowEveryone.",
     group: "messages",
-    access: "write",
+    parts: [
+      {
+        name: "send_message",
+        group: "messages",
+        access: "write",
+        value: "text",
+        note: "",
+      },
+      {
+        name: "send_file",
+        group: "messages",
+        access: "write",
+        value: "files",
+        params: ["files"],
+        note: "files uploads files.",
+      },
+    ],
     input: z.object({
       channelId: channelIdParam,
-      message: z
-        .string()
-        .min(1)
-        .max(MAX_CONTENT_LENGTH)
-        .optional()
-        .describe(`Message text, up to ${MAX_CONTENT_LENGTH} characters`),
-      replyToMessageId: snowflake("Message ID")
-        .optional()
-        .describe("Message ID to reply to, in the same channel"),
+      message: z.string().min(1).max(MAX_CONTENT_LENGTH).optional(),
+      replyToMessageId: snowflake("replyToMessageId").optional(),
       failIfNotExists: z
         .boolean()
         .optional()
-        .describe(
-          "When replying, fail if the replied message is gone. Defaults to true",
-        ),
-      embeds: z
-        .array(embedSchema)
-        .max(10)
-        .optional()
-        .describe("Up to 10 rich embeds"),
-      files: z
-        .array(fileSource)
-        .max(10)
-        .optional()
-        .describe("Up to 10 files to attach"),
+        .describe("Fail the reply if its message is gone. Default true"),
+      embeds: z.array(embedSchema).max(10).optional(),
+      files: z.array(fileSource).max(10).optional(),
       allowEveryone: allowEveryoneParam,
     }),
     run: async (args, ctx) => {
@@ -134,69 +167,21 @@ export const messageTools: Tool[] = [
             : undefined,
         }),
       );
-      return toMessageItem(sent);
-    },
-  }),
-  defineTool({
-    name: "send_file",
-    title: "Send file",
-    description:
-      "Upload a file to a channel or thread, from a local path under the file roots, a public https URL, or base64 data. Give exactly one source.",
-    group: "messages",
-    access: "write",
-    input: z.object({
-      channelId: channelIdParam,
-      ...fileFields,
-      message: z
-        .string()
-        .min(1)
-        .max(MAX_CONTENT_LENGTH)
-        .optional()
-        .describe("Text to post with the file"),
-      allowEveryone: allowEveryoneParam,
-    }),
-    run: async (args, ctx) => {
-      await requireMessageChannel(ctx, args.channelId);
-      const file = await ctx.files.load(
-        definedOnly({
-          filePath: args.filePath,
-          fileUrl: args.fileUrl,
-          fileData: args.fileData,
-          fileName: args.fileName,
-        }),
-      );
-      const sent = await ctx.client.rest.channels.createMessage(
-        args.channelId,
-        messageFields({
-          content: args.message,
-          files: [file],
-          allowEveryone: args.allowEveryone,
-        }),
-      );
-      return toMessageItem(sent);
+      return toLinkedMessage(sent);
     },
   }),
   defineTool({
     name: "edit_message",
     title: "Edit message",
     description:
-      "Edit a message in a channel or thread. Give new text, new embeds, or both. Embeds replace the existing embeds.",
+      "Edit a message in a channel or thread: new text, new embeds, or both. Embeds replace the old ones.",
     group: "messages",
     access: "write",
     input: z.object({
       channelId: channelIdParam,
       messageId: messageIdParam,
-      newMessage: z
-        .string()
-        .min(1)
-        .max(MAX_CONTENT_LENGTH)
-        .optional()
-        .describe(`New message text, up to ${MAX_CONTENT_LENGTH} characters`),
-      embeds: z
-        .array(embedSchema)
-        .max(10)
-        .optional()
-        .describe("New rich embeds, up to 10. Replaces the existing embeds"),
+      newMessage: z.string().min(1).max(MAX_CONTENT_LENGTH).optional(),
+      embeds: z.array(embedSchema).max(10).optional(),
       allowEveryone: allowEveryoneParam,
     }),
     run: async (args, ctx) => {
@@ -213,7 +198,7 @@ export const messageTools: Tool[] = [
           allowEveryone: args.allowEveryone,
         }),
       );
-      return toMessageItem(edited);
+      return toLinkedMessage(edited);
     },
   }),
   defineTool({
@@ -242,7 +227,8 @@ export const messageTools: Tool[] = [
   defineTool({
     name: "read_messages",
     title: "Read messages",
-    description: `Read the newest messages of a channel or thread, newest first. Page with at most one of before, after, or around. Returns up to ${MAX_READ_LIMIT} messages.`,
+    description:
+      "Read or search the history of a channel or thread, newest first. Page with one of before, after, or around. contains finds text by scanning up to scanLimit messages.",
     group: "messages",
     access: "read",
     input: z.object({
@@ -251,18 +237,48 @@ export const messageTools: Tool[] = [
       before: beforeParam,
       after: afterParam,
       around: aroundParam,
+      contains: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("Return only messages with this text, ignoring case"),
+      scanLimit: scanParam,
     }),
     run: async (args, ctx) => {
       const options = historyOptions(args);
+      if (args.contains === undefined) {
+        if (args.scanLimit !== undefined)
+          throw new ToolError("scanLimit needs contains");
+        await requireMessageChannel(ctx, args.channelId);
+        const messages = await ctx.client.rest.channels.getMessages(
+          args.channelId,
+          options,
+        );
+        return {
+          channelId: args.channelId,
+          count: messages.length,
+          messages: messages.map(toMessageItem),
+        };
+      }
+      if (args.around)
+        throw new ToolError("contains scans from before or after, not around");
       await requireMessageChannel(ctx, args.channelId);
-      const messages = await ctx.client.rest.channels.getMessages(
+      const { messages, complete } = await scanHistory(
+        ctx,
         args.channelId,
-        options,
+        { before: args.before, after: args.after },
+        args.scanLimit ?? DEFAULT_SCAN,
       );
+      const needle = args.contains.toLowerCase();
+      const matches = messages
+        .filter((m) => m.content.toLowerCase().includes(needle))
+        .slice(0, args.count ?? MAX_READ_LIMIT);
       return {
         channelId: args.channelId,
-        count: messages.length,
-        messages: messages.map(toMessageItem),
+        scanned: messages.length,
+        complete,
+        count: matches.length,
+        messages: matches.map(toMessageItem),
       };
     },
   }),
@@ -270,69 +286,75 @@ export const messageTools: Tool[] = [
     name: "get_message",
     title: "Get message",
     description:
-      "Get one message of a channel or thread, in the same shape as the items of read_messages.",
+      "Get one message of a channel or thread by ID, with its attachments, link, and the message it replies to. attachmentId keeps one attachment. includeReplies finds its replies by scanning the newer messages.",
     group: "messages",
     access: "read",
     input: z.object({
       channelId: channelIdParam,
       messageId: messageIdParam,
+      attachmentId: snowflake("attachmentId").optional(),
+      includeReplies: z.boolean().optional(),
+      scanLimit: scanParam,
     }),
     run: async (args, ctx) => {
+      if (args.scanLimit !== undefined && !args.includeReplies)
+        throw new ToolError("scanLimit needs includeReplies");
       await requireMessageChannel(ctx, args.channelId);
       const message = await ctx.client.rest.channels.getMessage(
         args.channelId,
         args.messageId,
       );
-      return toMessageItem(message);
+      const referenced = repliedTo(message) && message.referencedMessage;
+      const result = {
+        ...toLinkedMessage(message),
+        ...(referenced ? { repliedMessage: toMessageItem(referenced) } : {}),
+      };
+      if (args.attachmentId) {
+        const kept = (result.attachments ?? []).filter(
+          (a) => a.id === args.attachmentId,
+        );
+        if (kept.length === 0)
+          throw new ToolError(
+            `Attachment ${args.attachmentId} is not on message ${args.messageId}`,
+          );
+        result.attachments = kept;
+      }
+      if (!args.includeReplies) return result;
+      const { messages, complete } = await scanHistory(
+        ctx,
+        args.channelId,
+        { after: message.id },
+        args.scanLimit ?? DEFAULT_SCAN,
+      );
+      const replies = messages
+        .filter((m) => repliedTo(m) === message.id)
+        .sort(byIdAscending);
+      return {
+        ...result,
+        replies: replies.map(toMessageItem),
+        repliesScanned: messages.length,
+        repliesComplete: complete,
+      };
     },
   }),
   defineTool({
     name: "search_guild_messages",
     title: "Search server messages",
     description:
-      "Search the messages of a server with Discord's search index. Returns the total result count and up to 25 messages per call. Use offset to page.",
+      "Search all messages of a server with Discord's search index, by text, author, mention, channel, or content type. Returns the total and up to 25 messages; page with offset.",
     group: "messages",
     access: "read",
     input: z.object({
       guildId,
-      content: z
-        .string()
-        .min(1)
-        .max(MAX_CONTENT_LENGTH)
-        .optional()
-        .describe("Text to search for"),
-      authorId: snowflake("Author user ID")
-        .optional()
-        .describe("Only messages sent by this user"),
-      mentions: snowflake("Mentioned user ID")
-        .optional()
-        .describe("Only messages that mention this user"),
-      channelId: snowflake("Channel ID")
-        .optional()
-        .describe("Only messages in this channel"),
-      has: z
-        .array(z.enum(SEARCH_HAS))
-        .optional()
-        .describe("Only messages that contain these kinds of content"),
-      minId: snowflake("Message ID")
-        .optional()
-        .describe("Only messages sent after this message ID"),
-      maxId: snowflake("Message ID")
-        .optional()
-        .describe("Only messages sent before this message ID"),
-      offset: z
-        .number()
-        .int()
-        .min(0)
-        .optional()
-        .describe("Number of results to skip, for paging"),
-      limit: z
-        .number()
-        .int()
-        .min(1)
-        .max(25)
-        .optional()
-        .describe("Number of messages to return, from 1 to 25. Defaults to 25"),
+      content: z.string().min(1).max(MAX_CONTENT_LENGTH).optional(),
+      authorId: snowflake("authorId").optional(),
+      mentions: snowflake("mentions").optional().describe("Mentioned user ID"),
+      channelId: snowflake("channelId").optional(),
+      has: z.array(z.enum(SEARCH_HAS)).optional(),
+      minId: snowflake("minId").optional().describe("Sent after this ID"),
+      maxId: snowflake("maxId").optional().describe("Sent before this ID"),
+      offset: z.number().int().min(0).optional(),
+      limit: z.number().int().min(1).max(25).optional().describe("Default 25"),
     }),
     run: async (args, ctx) => {
       const id = ctx.guildId(args.guildId);
@@ -368,96 +390,45 @@ export const messageTools: Tool[] = [
       };
     },
   }),
-  defineTool({
-    name: "add_reaction",
-    title: "Add reaction",
+  defineMergedTool({
+    name: "react",
+    title: "React to message",
     description:
-      "Add an emoji reaction to a message. Use a Unicode emoji, or name:id for a custom emoji.",
+      "Set the bot's emoji reaction on a message. emoji is Unicode, or name:id for a custom emoji.",
     group: "messages",
-    access: "write",
+    key: "action",
+    parts: [
+      {
+        name: "add_reaction",
+        group: "messages",
+        access: "write",
+        value: "add",
+        note: "add adds it.",
+      },
+      {
+        name: "remove_reaction",
+        group: "messages",
+        access: "write",
+        value: "remove",
+        note: "remove removes it.",
+      },
+    ],
     input: z.object({
       channelId: channelIdParam,
       messageId: messageIdParam,
-      emoji: z
-        .string()
-        .min(1)
-        .describe("Unicode emoji, or name:id for a custom emoji"),
-    }),
-    run: async (args, ctx) => {
-      const channel = await requireMessageChannel(ctx, args.channelId);
-      await ctx.client.rest.channels.createReaction(
-        args.channelId,
-        args.messageId,
-        args.emoji,
-      );
-      return {
-        added: true,
-        emoji: args.emoji,
-        jumpUrl: jumpUrl(guildIdOf(channel), args.channelId, args.messageId),
-      };
-    },
-  }),
-  defineTool({
-    name: "remove_reaction",
-    title: "Remove reaction",
-    description:
-      "Remove the bot's own emoji reaction from a message. Use a Unicode emoji, or name:id for a custom emoji.",
-    group: "messages",
-    access: "write",
-    input: z.object({
-      channelId: channelIdParam,
-      messageId: messageIdParam,
-      emoji: z
-        .string()
-        .min(1)
-        .describe("Unicode emoji, or name:id for a custom emoji"),
-    }),
-    run: async (args, ctx) => {
-      const channel = await requireMessageChannel(ctx, args.channelId);
-      await ctx.client.rest.channels.deleteReaction(
-        args.channelId,
-        args.messageId,
-        args.emoji,
-      );
-      return {
-        removed: true,
-        emoji: args.emoji,
-        jumpUrl: jumpUrl(guildIdOf(channel), args.channelId, args.messageId),
-      };
-    },
-  }),
-  defineTool({
-    name: "get_attachment",
-    title: "Get attachments",
-    description:
-      "Get the metadata of a message's attachments: file name, size, content type, and URLs. Does not download files.",
-    group: "messages",
-    access: "read",
-    input: z.object({
-      channelId: channelIdParam,
-      messageId: messageIdParam,
-      attachmentId: snowflake("Attachment ID")
-        .optional()
-        .describe("Only this attachment. Omit to get all attachments"),
+      emoji: z.string().min(1),
+      action: z.enum(["add", "remove"]),
     }),
     run: async (args, ctx) => {
       await requireMessageChannel(ctx, args.channelId);
-      const message = await ctx.client.rest.channels.getMessage(
-        args.channelId,
-        args.messageId,
-      );
-      const attachments = message.attachments.toArray();
-      const selected = args.attachmentId
-        ? attachments.filter((a) => a.id === args.attachmentId)
-        : attachments;
-      if (args.attachmentId && selected.length === 0) {
-        throw new ToolError(
-          `Attachment ${args.attachmentId} is not on message ${args.messageId}`,
-        );
-      }
+      const rest = ctx.client.rest.channels;
+      await (args.action === "add"
+        ? rest.createReaction(args.channelId, args.messageId, args.emoji)
+        : rest.deleteReaction(args.channelId, args.messageId, args.emoji));
       return {
+        action: args.action,
+        emoji: args.emoji,
         messageId: args.messageId,
-        attachments: selected.map(toAttachmentItem),
       };
     },
   }),

@@ -27,9 +27,7 @@ const inviteCodeInput = z
   .string()
   .min(1)
   .max(500)
-  .describe(
-    "Invite code or full URL (e.g. 'ABCde' or 'https://discord.gg/ABCde')",
-  );
+  .describe("Code or discord.gg URL");
 
 const inviteUrl = (code: string) => `https://discord.gg/${code}`;
 
@@ -37,8 +35,7 @@ export const inviteTools = [
   defineTool({
     name: "create_invite",
     title: "Create invite",
-    description:
-      "Creates an invite link for a channel of a server. Choose how long it lasts, how many uses it has, and whether members get temporary membership.",
+    description: "Create an invite link for a channel.",
     group: "invites",
     access: "write",
     input: z.object({
@@ -50,26 +47,16 @@ export const inviteTools = [
         .min(0)
         .max(604800)
         .optional()
-        .describe(
-          "Seconds before the invite expires. 0 means it never expires. Discord defaults to 86400 (24 hours).",
-        ),
+        .describe("Seconds, 0 = never"),
       maxUses: z
         .number()
         .int()
         .min(0)
         .max(100)
         .optional()
-        .describe("Maximum number of uses. 0 means unlimited. Defaults to 0."),
-      temporary: z
-        .boolean()
-        .optional()
-        .describe(
-          "Whether members get temporary membership, and are removed when they disconnect unless they have a role",
-        ),
-      unique: z
-        .boolean()
-        .optional()
-        .describe("Whether to force a new, unique invite code"),
+        .describe("0 = unlimited"),
+      temporary: z.boolean().optional(),
+      unique: z.boolean().optional(),
       reason: auditReason,
     }),
     run: async (args, ctx) => {
@@ -88,7 +75,6 @@ export const inviteTools = [
       return {
         code: invite.code,
         url: inviteUrl(invite.code),
-        channelId: channel.id,
         channelName: channel.name,
         maxAge: invite.maxAge,
         maxUses: invite.maxUses,
@@ -100,8 +86,7 @@ export const inviteTools = [
   defineTool({
     name: "list_invites",
     title: "List invites",
-    description:
-      "Lists the active invites of a server, with their channel, creator, use count, limits, and temporary flag.",
+    description: "List active invites with channel, creator, uses, and limits.",
     group: "invites",
     access: "read",
     input: z.object({ guildId }),
@@ -111,7 +96,6 @@ export const inviteTools = [
       return {
         invites: invites.map((invite) => ({
           code: invite.code,
-          url: inviteUrl(invite.code),
           channelId: invite.channelID,
           inviterId: invite.inviter?.id ?? null,
           inviterName: invite.inviter?.username ?? null,
@@ -128,8 +112,7 @@ export const inviteTools = [
   defineTool({
     name: "delete_invite",
     title: "Delete invite",
-    description:
-      "Deletes (revokes) an invite, so that its link stops working. Accepts a code or a full URL.",
+    description: "Revoke an invite so its link stops working.",
     group: "invites",
     access: "destructive",
     input: z.object({
@@ -147,17 +130,12 @@ export const inviteTools = [
     name: "get_invite_details",
     title: "Get invite details",
     description:
-      "Gets the details of an invite, such as its server, channel, and creator. Works for any public invite.",
+      "Get a public invite's server, channel, creator, and member counts.",
     group: "invites",
     access: "read",
     input: z.object({
       inviteCode: inviteCodeInput,
-      withCounts: z
-        .boolean()
-        .optional()
-        .describe(
-          "Whether to include approximate member counts. Defaults to true.",
-        ),
+      withCounts: z.boolean().optional(),
     }),
     run: async (args, ctx) => {
       const code = parseInviteCode(args.inviteCode);
@@ -169,7 +147,6 @@ export const inviteTools = [
             });
       return {
         code: invite.code,
-        url: inviteUrl(invite.code),
         guild: invite.guild
           ? { id: invite.guild.id, name: invite.guild.name }
           : null,

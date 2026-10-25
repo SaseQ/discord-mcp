@@ -1,7 +1,7 @@
 import { OverwriteTypes, Permissions } from "oceanic.js";
 import { z } from "zod";
 import type { Context } from "../context.ts";
-import { defineTool, ToolError } from "../tool.ts";
+import { defineMergedTool, defineTool, ToolError } from "../tool.ts";
 import { auditReason, guildId, snowflake } from "./schemas.ts";
 import { reasonOption } from "./util.ts";
 
@@ -53,20 +53,42 @@ const sideBits = (
   return namesToBits(names);
 };
 
-/** Reads both sides of an overwrite, and rejects an overwrite that sets nothing or sets a flag on both sides. */
+/** Reads a CSV of permission names, and rejects every name that Discord does not define. */
+const csvBits = (csv: string | undefined): bigint =>
+  namesToBits(
+    (csv ?? "")
+      .split(",")
+      .map((name) => name.trim())
+      .filter((name) => name !== ""),
+  );
+
+/** Reads the sides of an overwrite, and rejects a missing change, a flag on both sides, and a clear without merge. */
 const overwriteBits = (args: {
   allowRaw?: string | undefined;
   allowPermissions?: string | undefined;
   denyRaw?: string | undefined;
   denyPermissions?: string | undefined;
-}): Bits => {
+  merge?: boolean | undefined;
+  clearPermissions?: string | undefined;
+}): Bits & { clear: bigint } => {
+  if (!args.merge && args.clearPermissions !== undefined)
+    throw new ToolError("clearPermissions is valid only with merge: true");
   const allow = sideBits(args.allowRaw, args.allowPermissions, "allow");
   const deny = sideBits(args.denyRaw, args.denyPermissions, "deny");
-  if (allow === 0n && deny === 0n)
-    throw new ToolError("Give at least one allow or deny permission");
+  const clear = csvBits(args.clearPermissions);
+  if (allow === 0n && deny === 0n && clear === 0n)
+    throw new ToolError(
+      args.merge
+        ? "Give at least one allow, deny, or clear permission"
+        : "Give at least one allow or deny permission",
+    );
   if ((allow & deny) !== 0n)
     throw new ToolError("allow and deny cannot contain the same permission");
-  return { allow, deny };
+  if (((allow | deny) & clear) !== 0n)
+    throw new ToolError(
+      "clearPermissions cannot contain a permission that allow or deny sets",
+    );
+  return { allow, deny, clear };
 };
 
 /** Fetches a channel of the server, and turns a channel of another server into a ToolError. */
@@ -88,7 +110,7 @@ const findRole = async (ctx: Context, server: string, roleId: string) => {
   return role;
 };
 
-/** Sets the overwrite of a target to exactly the given sides, with no merge into the old overwrite. */
+/** Sets the overwrite of a target to the given sides. */
 const setOverwrite = async (
   ctx: Context,
   channelId: string,
@@ -113,25 +135,20 @@ const setOverwrite = async (
 const bitfield = (side: "allow" | "deny") =>
   z
     .string()
-    .regex(/^\d+$/, `${side}Raw must be a decimal bitfield`)
+    .refine((v) => /^\d+$/.test(v), `${side}Raw must be a decimal bitfield`)
     .optional()
-    .describe(
-      `${side === "allow" ? "Allow" : "Deny"} permissions as a decimal bitfield, such as 1024. Use this or the names, not both.`,
-    );
+    .describe("Decimal bitfield");
 
-const permissionNames = (side: "allow" | "deny") =>
-  z
-    .string()
-    .optional()
-    .describe(
-      `${side === "allow" ? "Allow" : "Deny"} permissions as a CSV of Discord names, such as VIEW_CHANNEL,CONNECT`,
-    );
+const permissionNames = z
+  .string()
+  .optional()
+  .describe("CSV of names, e.g. VIEW_CHANNEL");
 
 const overwriteFields = {
   allowRaw: bitfield("allow"),
   denyRaw: bitfield("deny"),
-  allowPermissions: permissionNames("allow"),
-  denyPermissions: permissionNames("deny"),
+  allowPermissions: permissionNames,
+  denyPermissions: permissionNames,
 };
 
 export const permissionTools = [
@@ -139,7 +156,7 @@ export const permissionTools = [
     name: "list_channel_permission_overwrites",
     title: "List channel permission overwrites",
     description:
-      "Lists the permission overwrites of a channel, with the type and ID of each target and the allow and deny flags decoded into names.",
+      "List channel permission overwrites: target type and ID, allow and deny flags decoded into names.",
     group: "permissions",
     access: "read",
     input: z.object({
@@ -164,56 +181,65 @@ export const permissionTools = [
     },
   }),
 
-  defineTool({
-    name: "upsert_role_channel_permissions",
-    title: "Set role channel permissions",
+  defineMergedTool({
+    name: "upsert_channel_permissions",
+    title: "Set channel permissions",
     description:
-      "Creates or replaces the permission overwrite of a role on a channel. The allow and deny sides are set to the given values, and a side that is not given becomes 0.",
+      "Create, replace, or merge a permission overwrite on a channel.",
     group: "permissions",
-    access: "write",
+    key: "targetType",
+    parts: [
+      {
+        name: "upsert_role_channel_permissions",
+        group: "permissions",
+        access: "write",
+        value: "role",
+        note: "role: targetId is a role. Lock a channel read-only: role, targetId = the server ID (@everyone), denyPermissions SEND_MESSAGES, merge true; unlock with clearPermissions SEND_MESSAGES.",
+      },
+      {
+        name: "upsert_member_channel_permissions",
+        group: "permissions",
+        access: "write",
+        value: "member",
+        note: "member: targetId is a user.",
+      },
+    ],
     input: z.object({
       guildId,
       channelId: snowflake("Channel ID"),
-      roleId: snowflake("Role ID"),
+      targetType: z.enum(["role", "member"]),
+      targetId: snowflake("Role or user ID"),
       ...overwriteFields,
+      merge: z
+        .boolean()
+        .optional()
+        .describe("Keep other bits of the old overwrite, default false"),
+      clearPermissions: z
+        .string()
+        .optional()
+        .describe("CSV of names to reset, merge only"),
       reason: auditReason,
     }),
     run: async (args, ctx) => {
-      const bits = overwriteBits(args);
+      const { clear, ...given } = overwriteBits(args);
       const server = ctx.guildId(args.guildId);
-      await findChannel(ctx, server, args.channelId);
-      await findRole(ctx, server, args.roleId);
+      const channel = await findChannel(ctx, server, args.channelId);
+      if (args.targetType === "role")
+        await findRole(ctx, server, args.targetId);
+      let bits: Bits = given;
+      if (args.merge) {
+        const old = channel.permissionOverwrites.get(args.targetId);
+        const oldAllow = old?.allow ?? 0n;
+        const oldDeny = old?.deny ?? 0n;
+        bits = {
+          allow: (oldAllow | given.allow) & ~given.deny & ~clear,
+          deny: (oldDeny | given.deny) & ~given.allow & ~clear,
+        };
+      }
       return setOverwrite(
         ctx,
         args.channelId,
-        { type: "role", id: args.roleId },
-        bits,
-        args.reason,
-      );
-    },
-  }),
-
-  defineTool({
-    name: "upsert_member_channel_permissions",
-    title: "Set member channel permissions",
-    description:
-      "Creates or replaces the permission overwrite of a member on a channel. The allow and deny sides are set to the given values, and a side that is not given becomes 0.",
-    group: "permissions",
-    access: "write",
-    input: z.object({
-      guildId,
-      channelId: snowflake("Channel ID"),
-      userId: snowflake("User ID"),
-      ...overwriteFields,
-      reason: auditReason,
-    }),
-    run: async (args, ctx) => {
-      const bits = overwriteBits(args);
-      await findChannel(ctx, ctx.guildId(args.guildId), args.channelId);
-      return setOverwrite(
-        ctx,
-        args.channelId,
-        { type: "member", id: args.userId },
+        { type: args.targetType, id: args.targetId },
         bits,
         args.reason,
       );
@@ -224,16 +250,14 @@ export const permissionTools = [
     name: "delete_channel_permission_overwrite",
     title: "Delete channel permission overwrite",
     description:
-      "Deletes the permission overwrite of a role or a member from a channel. The target then falls back to the channel's defaults.",
+      "Delete a role or member permission overwrite from a channel; the target falls back to channel defaults.",
     group: "permissions",
     access: "destructive",
     input: z.object({
       guildId,
       channelId: snowflake("Channel ID"),
-      targetType: z
-        .enum(["role", "member"])
-        .describe("Type of the overwrite target: role or member"),
-      targetId: snowflake("Target role or user ID"),
+      targetType: z.enum(["role", "member"]),
+      targetId: snowflake("Role or user ID"),
       reason: auditReason,
     }),
     run: async (args, ctx) => {

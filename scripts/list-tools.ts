@@ -1,5 +1,5 @@
 /**
- * Prints each tool with its group and access level, and whether DISCORD_MCP_ALLOW and DISCORD_MCP_DENY enable it.
+ * Prints each tool, and each part of a merged tool, with its group and access level, and whether DISCORD_MCP_ALLOW and DISCORD_MCP_DENY enable it.
  * It needs no Discord token.
  */
 import { isEnabled, parseSelectors } from "../src/policy.ts";
@@ -11,17 +11,20 @@ const policy = {
   deny: parseSelectors(Bun.env["DISCORD_MCP_DENY"]),
 };
 
-const rows = [...allTools]
-  .sort(
-    (a, b) => a.group.localeCompare(b.group) || a.name.localeCompare(b.name),
+// A merged tool shows one row for each part, because the selectors enable each part.
+const rows = allTools
+  .flatMap((t) =>
+    (t.parts?.list ?? [t]).map((p) => ({
+      tool: p.partOf ? `${p.partOf} (${p.name})` : p.name,
+      group: p.group,
+      access: p.access,
+      enabled: isEnabled(policy, p),
+    })),
   )
-  .map((t) => ({
-    tool: t.name,
-    group: t.group,
-    access: t.access,
-    enabled: isEnabled(policy, t),
-  }));
+  .sort(
+    (a, b) => a.group.localeCompare(b.group) || a.tool.localeCompare(b.tool),
+  );
 console.table(rows);
 console.log(
-  `${rows.filter((r) => r.enabled).length} of ${rows.length} tools enabled`,
+  `${rows.filter((r) => r.enabled).length} of ${rows.length} tools and parts enabled`,
 );

@@ -1,8 +1,9 @@
 import { ChannelTypes } from "oceanic.js";
 import { z } from "zod";
 import { defineTool, type Tool, ToolError } from "../tool.ts";
+import { findChannel } from "./channels.ts";
 import { guildId, snowflake } from "./schemas.ts";
-import { channelTypeName } from "./util.ts";
+import { channelTypeName, hasStatus } from "./util.ts";
 
 /** Channels that can start a thread from one of their messages. */
 const THREAD_PARENT_TYPES: readonly number[] = [
@@ -17,7 +18,8 @@ interface ThreadLike {
   type: ChannelTypes;
   parentID: string;
   messageCount: number;
-  threadMetadata: { archived: boolean };
+  createdAt: Date;
+  threadMetadata: { archived: boolean; locked: boolean };
 }
 
 const threadItem = (thread: ThreadLike, parentName: string | null) => ({
@@ -27,30 +29,58 @@ const threadItem = (thread: ThreadLike, parentName: string | null) => ({
   parentId: thread.parentID,
   parentName,
   archived: thread.threadMetadata.archived,
+  locked: thread.threadMetadata.locked,
+  createdAt: thread.createdAt.toISOString(),
   messageCount: thread.messageCount,
 });
 
+const ARCHIVED_LIMIT = 100;
+
 export const threadTools: Tool[] = [
   defineTool({
-    name: "list_active_threads",
-    title: "List active threads",
+    name: "list_threads",
+    title: "List threads",
     description:
-      "List the active threads of a server, with the ID and name of each thread's parent channel.",
+      "List threads with parent channel names. Without channelId: the server's active threads. With channelId: that channel's active and up to 100 recent archived public threads.",
     group: "threads",
     access: "read",
-    input: z.object({ guildId }),
+    input: z.object({ guildId, channelId: snowflake("Channel ID").optional() }),
     run: async (args, ctx) => {
       const id = ctx.guildId(args.guildId);
-      const [{ threads }, channels] = await Promise.all([
+      const [{ threads: active }, channels] = await Promise.all([
         ctx.client.rest.guilds.getActiveThreads(id),
         ctx.client.rest.guilds.getChannels(id),
       ]);
       const parentNames = new Map(channels.map((c) => [c.id, c.name]));
+      const toItem = (thread: ThreadLike) =>
+        threadItem(thread, parentNames.get(thread.parentID) ?? null);
+      if (args.channelId === undefined) {
+        return { count: active.length, threads: active.map(toItem) };
+      }
+      const channelId = findChannel(channels, args.channelId).id;
+      const threads = new Map<string, ThreadLike>(
+        active.filter((t) => t.parentID === channelId).map((t) => [t.id, t]),
+      );
+      let note: string | undefined;
+      try {
+        const archived =
+          await ctx.client.rest.channels.getPublicArchivedThreads(channelId, {
+            limit: ARCHIVED_LIMIT,
+          });
+        for (const thread of archived.threads) {
+          if (!threads.has(thread.id)) threads.set(thread.id, thread);
+        }
+        if (archived.hasMore)
+          note = `Only the ${ARCHIVED_LIMIT} newest archived threads are listed.`;
+      } catch (error) {
+        if (!hasStatus(error, 403)) throw error;
+        note =
+          "Archived threads were skipped: Discord refused with 403 Forbidden. The bot needs View Channel and Read Message History in this channel.";
+      }
       return {
-        count: threads.length,
-        threads: threads.map((thread) =>
-          threadItem(thread, parentNames.get(thread.parentID) ?? null),
-        ),
+        count: threads.size,
+        threads: [...threads.values()].map(toItem),
+        note,
       };
     },
   }),
@@ -58,27 +88,17 @@ export const threadTools: Tool[] = [
     name: "create_thread_from_message",
     title: "Create thread from message",
     description:
-      "Start a thread from a message in a text or announcement channel. The thread is named after the given name.",
+      "Start a thread from a message in a text or announcement channel.",
     group: "threads",
     access: "write",
     input: z.object({
-      channelId: snowflake("Channel ID").describe(
-        "Text or announcement channel that holds the message",
-      ),
-      messageId: snowflake("Message ID").describe(
-        "Message to start the thread from",
-      ),
-      name: z
-        .string()
-        .min(1)
-        .max(100)
-        .describe("Thread name, up to 100 characters"),
+      channelId: snowflake("Channel ID"),
+      messageId: snowflake("Message ID"),
+      name: z.string().min(1).max(100),
       autoArchiveDuration: z
         .literal([60, 1440, 4320, 10080])
         .optional()
-        .describe(
-          "Minutes of inactivity before the thread archives: 60, 1440, 4320, or 10080. Defaults to the channel setting",
-        ),
+        .describe("Idle minutes before archiving. Default: channel setting"),
     }),
     run: async (args, ctx) => {
       const channel = await ctx.client.rest.channels.get(args.channelId);

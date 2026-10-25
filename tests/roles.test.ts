@@ -57,16 +57,17 @@ describe("@everyone guards", () => {
     expect(getRoles.calls).toEqual([]);
   });
 
-  test("assign_role rejects the role whose ID is the guild ID before any REST call", async () => {
+  test("set_member_role add rejects the role whose ID is the guild ID before any REST call", async () => {
     const addMemberRole = recorder(undefined);
     const getMember = recorder(fakeMemberOf("alex"));
     const getRoles = recorder([fakeRole({ id: everyone })]);
     const ctx = guildsContext({ addMemberRole, getMember, getRoles });
 
-    const result = await callTool(roleTools, ctx, "assign_role", {
+    const result = await callTool(roleTools, ctx, "set_member_role", {
       guildId: DEFAULT_GUILD,
       userId: USER,
       roleId: everyone,
+      action: "add",
     });
 
     expect(result.isError).toBe(true);
@@ -75,16 +76,17 @@ describe("@everyone guards", () => {
     expect(getRoles.calls).toEqual([]);
   });
 
-  test("remove_role rejects the role whose ID is the guild ID before any REST call", async () => {
+  test("set_member_role remove rejects the role whose ID is the guild ID before any REST call", async () => {
     const removeMemberRole = recorder(undefined);
     const getMember = recorder(fakeMemberOf("alex"));
     const getRoles = recorder([fakeRole({ id: everyone })]);
     const ctx = guildsContext({ removeMemberRole, getMember, getRoles });
 
-    const result = await callTool(roleTools, ctx, "remove_role", {
+    const result = await callTool(roleTools, ctx, "set_member_role", {
       guildId: DEFAULT_GUILD,
       userId: USER,
       roleId: everyone,
+      action: "remove",
     });
 
     expect(result.isError).toBe(true);
@@ -221,7 +223,7 @@ describe("delete_role", () => {
   });
 });
 
-describe("assign_role", () => {
+describe("set_member_role add", () => {
   test("adds the role to the member with the right IDs", async () => {
     const addMemberRole = recorder(undefined);
     const ctx = guildsContext({
@@ -230,10 +232,11 @@ describe("assign_role", () => {
       getRoles: recorder([fakeRole()]),
     });
 
-    const result = await callTool(roleTools, ctx, "assign_role", {
+    const result = await callTool(roleTools, ctx, "set_member_role", {
       guildId: DEFAULT_GUILD,
       userId: USER,
       roleId: ROLE,
+      action: "add",
     });
 
     expect(result.isError).toBe(false);
@@ -253,10 +256,11 @@ describe("assign_role", () => {
       getRoles: recorder([fakeRole()]),
     });
 
-    await callTool(roleTools, ctx, "assign_role", {
+    await callTool(roleTools, ctx, "set_member_role", {
       guildId: DEFAULT_GUILD,
       userId: USER,
       roleId: ROLE,
+      action: "add",
       reason: "promotion",
     });
 
@@ -264,7 +268,7 @@ describe("assign_role", () => {
   });
 });
 
-describe("remove_role", () => {
+describe("set_member_role remove", () => {
   test("removes the role from the member with the right IDs", async () => {
     const removeMemberRole = recorder(undefined);
     const ctx = guildsContext({
@@ -273,10 +277,11 @@ describe("remove_role", () => {
       getRoles: recorder([fakeRole()]),
     });
 
-    const result = await callTool(roleTools, ctx, "remove_role", {
+    const result = await callTool(roleTools, ctx, "set_member_role", {
       guildId: DEFAULT_GUILD,
       userId: USER,
       roleId: ROLE,
+      action: "remove",
       reason: "left team",
     });
 

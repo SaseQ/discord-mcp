@@ -29,56 +29,37 @@ const assertInFuture = (time: Date, field: string) => {
     throw new ToolError(`${field} must be in the future`);
 };
 
-const eventTimeInput = (what: string) =>
-  z
-    .string()
-    .min(1)
-    .max(64)
-    .describe(
-      `${what}, as an ISO 8601 time with an offset (e.g. 2030-11-01T18:00:00Z)`,
-    );
+const eventTimeInput = z
+  .string()
+  .min(1)
+  .max(64)
+  .describe("ISO 8601 with offset, e.g. 2030-11-01T18:00:00Z");
 
 const eventId = snowflake("Scheduled event ID");
 
 const statusInput = z
   .union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)])
-  .describe(
-    "New status: 1=Scheduled, 2=Active (start), 3=Completed, 4=Canceled",
-  );
+  .describe("1=Scheduled, 2=Active, 3=Completed, 4=Canceled");
 
 export const eventTools = [
   defineTool({
     name: "create_guild_scheduled_event",
     title: "Create scheduled event",
     description:
-      "Schedules an event on a server. Use entityType 1 (stage) or 2 (voice) with a channel, or 3 (external) with a location and an end time.",
+      "Create a scheduled event. Types 1 and 2 need channelId; type 3 needs location and end time.",
     group: "events",
     access: "write",
     input: z.object({
       guildId,
-      name: z.string().min(1).max(100).describe("Name of the event"),
-      description: z
-        .string()
-        .min(1)
-        .max(1000)
-        .optional()
-        .describe("Description of the event"),
-      scheduledStartTime: eventTimeInput("When the event starts"),
-      scheduledEndTime: eventTimeInput(
-        "When the event ends. Required for external events.",
-      ).optional(),
+      name: z.string().min(1).max(100),
+      description: z.string().min(1).max(1000).optional(),
+      scheduledStartTime: eventTimeInput,
+      scheduledEndTime: eventTimeInput.optional(),
       entityType: z
         .union([z.literal(1), z.literal(2), z.literal(3)])
-        .describe("Type of event: 1=Stage, 2=Voice, 3=External"),
-      channelId: snowflake("Channel ID")
-        .optional()
-        .describe("Channel ID. Required for types 1 and 2."),
-      location: z
-        .string()
-        .min(1)
-        .max(100)
-        .optional()
-        .describe("Location or link. Required for type 3 (external)."),
+        .describe("1=Stage, 2=Voice, 3=External"),
+      channelId: snowflake("Channel ID").optional(),
+      location: z.string().min(1).max(100).optional(),
       reason: auditReason,
     }),
     run: async (args, ctx) => {
@@ -149,27 +130,17 @@ export const eventTools = [
     name: "edit_guild_scheduled_event",
     title: "Edit scheduled event",
     description:
-      "Changes an event: its name, description, start time, location, or status (start, complete, or cancel it).",
+      "Edit a scheduled event, or start, complete, or cancel it with status.",
     group: "events",
     access: "write",
     input: z.object({
       guildId,
       eventId,
       status: statusInput.optional(),
-      name: z.string().min(1).max(100).optional().describe("New name"),
-      description: z
-        .string()
-        .min(1)
-        .max(1000)
-        .optional()
-        .describe("New description"),
-      scheduledStartTime: eventTimeInput("New start time").optional(),
-      location: z
-        .string()
-        .min(1)
-        .max(100)
-        .optional()
-        .describe("New location (for external events)"),
+      name: z.string().min(1).max(100).optional(),
+      description: z.string().min(1).max(1000).optional(),
+      scheduledStartTime: eventTimeInput.optional(),
+      location: z.string().min(1).max(100).optional(),
       reason: auditReason,
     }),
     run: async (args, ctx) => {
@@ -201,7 +172,7 @@ export const eventTools = [
   defineTool({
     name: "delete_guild_scheduled_event",
     title: "Delete scheduled event",
-    description: "Permanently deletes a scheduled event from a server.",
+    description: "Delete a scheduled event.",
     group: "events",
     access: "destructive",
     input: z.object({
@@ -224,17 +195,12 @@ export const eventTools = [
     name: "list_guild_scheduled_events",
     title: "List scheduled events",
     description:
-      "Lists the active and scheduled events of a server, with their times, status, and interested user count.",
+      "List active and scheduled events with times, status, and interested count.",
     group: "events",
     access: "read",
     input: z.object({
       guildId,
-      withUserCount: z
-        .boolean()
-        .optional()
-        .describe(
-          "Whether to include the interested user count. Defaults to true.",
-        ),
+      withUserCount: z.boolean().optional(),
     }),
     run: async (args, ctx) => {
       const id = ctx.guildId(args.guildId);
@@ -251,27 +217,14 @@ export const eventTools = [
     name: "get_guild_scheduled_event_users",
     title: "List event interested users",
     description:
-      "Lists the users who are interested in a scheduled event, with their nickname and roles when members are included.",
+      "List users interested in a scheduled event, with nickname and roles.",
     group: "events",
     access: "read",
     input: z.object({
       guildId,
       eventId,
-      limit: z
-        .number()
-        .int()
-        .min(1)
-        .max(100)
-        .optional()
-        .describe(
-          "Maximum number of users to return, from 1 to 100. Defaults to 100.",
-        ),
-      withMember: z
-        .boolean()
-        .optional()
-        .describe(
-          "Whether to include member data with roles. Defaults to true.",
-        ),
+      limit: z.number().int().min(1).max(100).optional(),
+      withMember: z.boolean().optional(),
     }),
     run: async (args, ctx) => {
       const id = ctx.guildId(args.guildId);

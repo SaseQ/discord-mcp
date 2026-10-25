@@ -48,13 +48,12 @@ export const webhookTools = [
   defineTool({
     name: "create_webhook",
     title: "Create webhook",
-    description:
-      "Create a new webhook on a channel. The result includes the webhook URL, which is shown only once.",
+    description: "Create a channel webhook. The URL is returned only once.",
     group: "webhooks",
     access: "write",
     input: z.object({
       channelId: snowflake("Channel ID"),
-      name: z.string().min(1).max(80).describe("Webhook name"),
+      name: z.string().min(1).max(80),
       reason: auditReason,
     }),
     run: async (args, ctx) => {
@@ -71,7 +70,6 @@ export const webhookTools = [
       return {
         id: webhook.id,
         name: webhook.name,
-        channelId: args.channelId,
         url: webhook.url,
       };
     },
@@ -79,7 +77,7 @@ export const webhookTools = [
   defineTool({
     name: "delete_webhook",
     title: "Delete webhook",
-    description: "Delete a webhook. Links that use it stop working.",
+    description: "Delete a webhook.",
     group: "webhooks",
     access: "destructive",
     input: z.object({
@@ -101,8 +99,7 @@ export const webhookTools = [
   defineTool({
     name: "list_webhooks",
     title: "List webhooks",
-    description:
-      "List the webhooks of a channel: their IDs and names. Webhook URLs are never returned.",
+    description: "List a channel's webhooks (IDs and names, never URLs).",
     group: "webhooks",
     access: "read",
     input: z.object({ channelId: snowflake("Channel ID") }),
@@ -120,18 +117,15 @@ export const webhookTools = [
   defineTool({
     name: "send_webhook_message",
     title: "Send webhook message",
-    description:
-      "Send a message through a webhook, given its Discord webhook URL. Returns a link to the message.",
+    description: "Send a message through a Discord webhook URL.",
     group: "webhooks",
     access: "write",
     input: z.object({
       webhookUrl: z
         .string()
         .max(300)
-        .describe(
-          "Discord webhook link, in the form https://discord.com/api/webhooks/{id}/{token}",
-        ),
-      message: z.string().min(1).max(2000).describe("Message content"),
+        .describe("https://discord.com/api/webhooks/{id}/{token}"),
+      message: z.string().min(1).max(2000),
     }),
     run: async (args, ctx) => {
       const { webhookId, token } = parseWebhookUrl(args.webhookUrl);

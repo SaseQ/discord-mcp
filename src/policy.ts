@@ -8,6 +8,8 @@
  * - `@<group>`, such as `@messages` or `@moderation`;
  * - `*`, every tool.
  *
+ * A merged tool, such as `moderate_member`, has parts with their own name, group, and access level, and the selectors pick each part.
+ *
  * A tool is enabled when a selector of the allowlist matches it and no selector of the denylist matches it.
  */
 
@@ -38,6 +40,8 @@ export interface ToolTraits {
   name: string;
   group: ToolGroup;
   access: Access;
+  /** For one part of a merged tool, the name of that tool, which selects the part too. */
+  partOf?: string;
 }
 
 export interface ToolPolicy {
@@ -72,8 +76,12 @@ export const selectorMatches = (
     const tag = selector.slice(1);
     return tag === tool.access || tag === tool.group;
   }
-  if (selector.includes("*")) return globToRegExp(selector).test(tool.name);
-  return selector === tool.name;
+  const names = tool.partOf ? [tool.name, tool.partOf] : [tool.name];
+  if (selector.includes("*")) {
+    const glob = globToRegExp(selector);
+    return names.some((name) => glob.test(name));
+  }
+  return names.includes(selector);
 };
 
 export const isEnabled = (policy: ToolPolicy, tool: ToolTraits): boolean => {

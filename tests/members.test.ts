@@ -8,7 +8,7 @@ import {
   restError,
 } from "./members-harness.ts";
 
-describe("get_user_id_by_name", () => {
+describe("search_members by name", () => {
   test("ranks exact matches first and reports the field that matched", async () => {
     const found = [
       fakeMember({ id: "100000000000000001", username: "alexander" }),
@@ -21,32 +21,28 @@ describe("get_user_id_by_name", () => {
     ];
     const ctx = fakeContext({ searchMembers: async () => found });
 
-    const result = await callTool(memberTools, ctx, "get_user_id_by_name", {
-      username: "alex",
+    const result = await callTool(memberTools, ctx, "search_members", {
+      query: "alex",
     });
 
     expect(result.isError).toBe(false);
-    const candidates = (
+    const members = (
       result.data as {
-        candidates: Array<{
-          userId: string;
-          exact: boolean;
-          matches: Array<{ field: string }>;
-        }>;
+        members: Array<{ userId: string; exact: boolean; matched: string[] }>;
       }
-    ).candidates;
-    expect(candidates.map((c) => c.userId)).toEqual([
+    ).members;
+    expect(members.map((c) => c.userId)).toEqual([
       "100000000000000002",
       "100000000000000001",
       "100000000000000003",
     ]);
-    expect(candidates[0]?.exact).toBe(true);
-    expect(candidates[0]?.matches.map((m) => m.field)).toEqual(["nick"]);
-    expect(candidates[2]?.exact).toBe(false);
-    expect(candidates[2]?.matches.map((m) => m.field)).toEqual(["globalName"]);
+    expect(members[0]?.exact).toBe(true);
+    expect(members[0]?.matched).toEqual(["nick"]);
+    expect(members[2]?.exact).toBe(false);
+    expect(members[2]?.matched).toEqual(["globalName"]);
   });
 
-  test("searches the REST API by the name without the discriminator", async () => {
+  test("searches by the name without the discriminator, then filters by it", async () => {
     const queries: unknown[] = [];
     const ctx = fakeContext({
       searchMembers: async (_guild: string, options: unknown) => {
@@ -66,25 +62,42 @@ describe("get_user_id_by_name", () => {
       },
     });
 
-    const result = await callTool(memberTools, ctx, "get_user_id_by_name", {
-      username: "alex#1234",
+    const result = await callTool(memberTools, ctx, "search_members", {
+      query: "alex#1234",
     });
 
     expect(queries).toEqual([{ query: "alex", limit: 100 }]);
-    const candidates = (
-      result.data as { candidates: Array<{ userId: string }> }
-    ).candidates;
-    expect(candidates.map((c) => c.userId)).toEqual(["100000000000000001"]);
+    const members = (result.data as { members: Array<{ userId: string }> })
+      .members;
+    expect(members.map((c) => c.userId)).toEqual(["100000000000000001"]);
   });
 
-  test("is an error when no member matches", async () => {
+  test.each(["Team #1a", "C#"])(
+    "searches %s whole when the part after # is no discriminator",
+    async (query) => {
+      const queries: unknown[] = [];
+      const ctx = fakeContext({
+        searchMembers: async (_guild: string, options: unknown) => {
+          queries.push(options);
+          return [];
+        },
+      });
+
+      await callTool(memberTools, ctx, "search_members", { query });
+
+      expect(queries).toEqual([{ query, limit: 25 }]);
+    },
+  );
+
+  test("returns no members when none matches", async () => {
     const ctx = fakeContext({ searchMembers: async () => [] });
 
-    const result = await callTool(memberTools, ctx, "get_user_id_by_name", {
-      username: "nobody",
+    const result = await callTool(memberTools, ctx, "search_members", {
+      query: "nobody",
     });
 
-    expect(result.isError).toBe(true);
+    expect(result.isError).toBe(false);
+    expect(result.data).toEqual({ members: [] });
   });
 });
 
@@ -115,13 +128,10 @@ describe("get_member_by_id", () => {
       userId: "100000000000000001",
       username: "alex",
       globalName: "Alex G",
-      nick: null,
-      displayName: "Alex G",
-      bot: false,
       joinedAt: "2024-05-06T07:08:09.000Z",
       roles: [
         { id: "200000000000000001", name: "Mod" },
-        { id: "200000000000000009", name: null },
+        { id: "200000000000000009" },
       ],
       timeoutUntil: "2030-01-02T03:04:05.000Z",
     });
@@ -138,7 +148,9 @@ describe("get_member_by_id", () => {
       userId: "100000000000000001",
     });
 
-    expect((result.data as { timeoutUntil: unknown }).timeoutUntil).toBeNull();
+    expect(
+      (result.data as { timeoutUntil: unknown }).timeoutUntil,
+    ).toBeUndefined();
   });
 });
 
@@ -229,7 +241,7 @@ describe("list_guild_members", () => {
     );
   });
 
-  test("returns null nextAfter on a partial page", async () => {
+  test("returns no nextAfter on a partial page", async () => {
     const ctx = fakeContext({
       getMembers: async () => [
         fakeMember({ id: "100000000000000001", username: "a" }),
@@ -240,7 +252,7 @@ describe("list_guild_members", () => {
       limit: 2,
     });
 
-    expect((result.data as { nextAfter: unknown }).nextAfter).toBeNull();
+    expect((result.data as { nextAfter: unknown }).nextAfter).toBeUndefined();
   });
 
   test("passes the cursor to Discord", async () => {

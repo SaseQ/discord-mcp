@@ -8,7 +8,7 @@ export const serverTools = [
     name: "get_server_info",
     title: "Get server info",
     description:
-      "Get details of a Discord server: name, owner, creation date, member count, channel counts, and boost status.",
+      "Get server info: owner, member and channel counts, boosts, features.",
     group: "server",
     access: "read",
     input: z.object({ guildId }),

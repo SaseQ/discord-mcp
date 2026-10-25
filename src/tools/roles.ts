@@ -1,7 +1,7 @@
 import type { Role } from "oceanic.js";
 import { z } from "zod";
 import type { Context } from "../context.ts";
-import { defineTool, ToolError } from "../tool.ts";
+import { defineMergedTool, defineTool, ToolError } from "../tool.ts";
 import { auditReason, guildId, snowflake } from "./schemas.ts";
 import { hasStatus, reasonOption } from "./util.ts";
 
@@ -43,15 +43,17 @@ const fetchMember = async (ctx: Context, server: string, userId: string) =>
 
 const permissionsSchema = z
   .string()
-  .regex(/^\d+$/, "permissions must be a permission bitfield as a string")
-  .describe("Permissions bitfield as a string of digits");
+  .refine(
+    (v) => /^\d+$/.test(v),
+    "permissions must be a permission bitfield as a string",
+  )
+  .describe("Bitfield as a digit string");
 
 export const roleTools = [
   defineTool({
     name: "list_roles",
     title: "List roles",
-    description:
-      "Lists the roles of a server with their ID, name, color, position, hoist and mentionable flags, and permissions bitfield.",
+    description: "List roles with color, position, flags, and permissions.",
     group: "roles",
     access: "read",
     input: z.object({ guildId }),
@@ -65,32 +67,21 @@ export const roleTools = [
   defineTool({
     name: "create_role",
     title: "Create role",
-    description:
-      "Creates a role on the server. Color is an RGB integer, and permissions is a bitfield string.",
+    description: "Create a role.",
     group: "roles",
     access: "write",
     input: z.object({
       guildId,
-      name: z.string().min(1).max(100).describe("Name of the new role"),
+      name: z.string().min(1).max(100),
       color: z
         .number()
         .int()
         .min(0)
         .max(0xffffff)
         .optional()
-        .describe(
-          "RGB color as an integer, such as 16711680 for red. 0 means no color.",
-        ),
-      hoist: z
-        .boolean()
-        .optional()
-        .describe(
-          "Whether members with this role are shown separately. Defaults to false.",
-        ),
-      mentionable: z
-        .boolean()
-        .optional()
-        .describe("Whether anyone can mention this role. Defaults to false."),
+        .describe("RGB integer, 0 for none"),
+      hoist: z.boolean().optional(),
+      mentionable: z.boolean().optional(),
       permissions: permissionsSchema.optional(),
       reason: auditReason,
     }),
@@ -111,28 +102,22 @@ export const roleTools = [
   defineTool({
     name: "edit_role",
     title: "Edit role",
-    description:
-      "Updates a role. Only the fields that are given change. The @everyone role cannot be edited.",
+    description: "Edit a role. Only given fields change. Not @everyone.",
     group: "roles",
     access: "write",
     input: z.object({
       guildId,
       roleId: snowflake("Role ID"),
-      name: z
-        .string()
-        .min(1)
-        .max(100)
-        .optional()
-        .describe("New name for the role"),
+      name: z.string().min(1).max(100).optional(),
       color: z
         .number()
         .int()
         .min(0)
         .max(0xffffff)
         .optional()
-        .describe("New RGB color as an integer. 0 means no color."),
-      hoist: z.boolean().optional().describe("New hoist setting"),
-      mentionable: z.boolean().optional().describe("New mentionable setting"),
+        .describe("RGB integer, 0 for none"),
+      hoist: z.boolean().optional(),
+      mentionable: z.boolean().optional(),
       permissions: permissionsSchema.optional(),
       reason: auditReason,
     }),
@@ -159,8 +144,7 @@ export const roleTools = [
   defineTool({
     name: "delete_role",
     title: "Delete role",
-    description:
-      "Permanently deletes a role from the server. The @everyone role cannot be deleted.",
+    description: "Delete a role permanently. Not @everyone.",
     group: "roles",
     access: "destructive",
     input: z.object({
@@ -178,67 +162,59 @@ export const roleTools = [
     },
   }),
 
-  defineTool({
-    name: "assign_role",
-    title: "Assign role",
-    description:
-      "Gives a role to a server member. The @everyone role cannot be assigned, because every member already has it.",
+  defineMergedTool({
+    name: "set_member_role",
+    title: "Set member role",
+    description: "Set a role on a member. Not @everyone.",
     group: "roles",
-    access: "write",
+    key: "action",
+    parts: [
+      {
+        name: "assign_role",
+        group: "roles",
+        access: "write",
+        value: "add",
+        note: "add gives it.",
+      },
+      {
+        name: "remove_role",
+        group: "roles",
+        access: "write",
+        value: "remove",
+        note: "remove takes it away.",
+      },
+    ],
     input: z.object({
       guildId,
       userId: snowflake("User ID"),
       roleId: snowflake("Role ID"),
+      action: z.enum(["add", "remove"]),
       reason: auditReason,
     }),
     run: async (args, ctx) => {
       const id = ctx.guildId(args.guildId);
       if (isEveryoneRole(id, args.roleId))
         throw new ToolError(
-          "The @everyone role cannot be assigned, because every member already has it",
+          args.action === "add"
+            ? "The @everyone role cannot be assigned, because every member already has it"
+            : "The @everyone role cannot be removed",
         );
       const member = await fetchMember(ctx, id, args.userId);
       const role = await findRole(ctx, id, args.roleId);
-      await ctx.client.rest.guilds.addMemberRole(
-        id,
-        args.userId,
-        args.roleId,
-        args.reason,
-      );
-      return {
-        userId: args.userId,
-        username: member.user.username,
-        roleId: role.id,
-        roleName: role.name,
-      };
-    },
-  }),
-
-  defineTool({
-    name: "remove_role",
-    title: "Remove role",
-    description:
-      "Removes a role from a server member. The @everyone role cannot be removed.",
-    group: "roles",
-    access: "write",
-    input: z.object({
-      guildId,
-      userId: snowflake("User ID"),
-      roleId: snowflake("Role ID"),
-      reason: auditReason,
-    }),
-    run: async (args, ctx) => {
-      const id = ctx.guildId(args.guildId);
-      if (isEveryoneRole(id, args.roleId))
-        throw new ToolError("The @everyone role cannot be removed");
-      const member = await fetchMember(ctx, id, args.userId);
-      const role = await findRole(ctx, id, args.roleId);
-      await ctx.client.rest.guilds.removeMemberRole(
-        id,
-        args.userId,
-        args.roleId,
-        args.reason,
-      );
+      if (args.action === "add")
+        await ctx.client.rest.guilds.addMemberRole(
+          id,
+          args.userId,
+          args.roleId,
+          args.reason,
+        );
+      else
+        await ctx.client.rest.guilds.removeMemberRole(
+          id,
+          args.userId,
+          args.roleId,
+          args.reason,
+        );
       return {
         userId: args.userId,
         username: member.user.username,

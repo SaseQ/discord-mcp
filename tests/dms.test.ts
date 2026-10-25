@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { MessageTypes } from "oceanic.js";
 import { dmTools } from "../src/tools/dms.ts";
 import { callTool, fakeContext, recorder } from "./harness.ts";
 import { fakeMessage } from "./messages-harness.ts";
@@ -100,6 +101,7 @@ describe("read_private_messages", () => {
       fakeMessage({
         channelID: DM,
         guildID: undefined,
+        type: MessageTypes.REPLY,
         messageReference: { messageID: MESSAGE },
       }),
     ]);
@@ -122,10 +124,8 @@ describe("read_private_messages", () => {
           author: {
             id: "400000000000000001",
             username: "alex",
-            globalName: "Alex",
-            bot: false,
+            displayName: "Alex",
           },
-          attachments: [],
           replyTo: MESSAGE,
         },
       ],

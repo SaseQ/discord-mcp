@@ -1,6 +1,5 @@
-import type { McpServer } from "@modelcontextprotocol/server";
+import type { McpServer, StandardSchemaV1 } from "@modelcontextprotocol/server";
 import { DiscordRESTError } from "oceanic.js";
-import type { z } from "zod";
 import type { Context } from "../src/context.ts";
 import type { FileLoader } from "../src/files.ts";
 import type { Tool } from "../src/tool.ts";
@@ -29,11 +28,14 @@ export const callTool = async (
   name: string,
   args: Record<string, unknown>,
 ): Promise<CallResult> => {
-  const registered = new Map<string, { schema: z.ZodType; handler: Handler }>();
+  const registered = new Map<
+    string,
+    { schema: StandardSchemaV1; handler: Handler }
+  >();
   const server = {
     registerTool: (
       toolName: string,
-      config: { inputSchema: z.ZodType },
+      config: { inputSchema: StandardSchemaV1 },
       handler: Handler,
     ) => {
       registered.set(toolName, { schema: config.inputSchema, handler });
@@ -42,9 +44,14 @@ export const callTool = async (
   for (const tool of tools) tool.register(server as unknown as McpServer, ctx);
   const tool = registered.get(name);
   if (!tool) throw new Error(`no tool named ${name}`);
-  const parsed = tool.schema.safeParse(args);
-  if (!parsed.success) return { isError: true, data: parsed.error.message };
-  const result = await tool.handler(parsed.data);
+  const parsed = await tool.schema["~standard"].validate(args);
+  if (parsed.issues) {
+    return {
+      isError: true,
+      data: parsed.issues.map((issue) => issue.message).join("; "),
+    };
+  }
+  const result = await tool.handler(parsed.value);
   const first = result.content[0] as { text: string } | undefined;
   const text = first?.text ?? "";
   if (result.isError) return { isError: true, data: text };

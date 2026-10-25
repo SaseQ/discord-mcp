@@ -33,9 +33,7 @@ const tagIds = z
   .string()
   .max(500)
   .optional()
-  .describe(
-    "Comma-separated tag IDs or tag names (case-insensitive), at most 5. Pass an empty string to clear the tags.",
-  );
+  .describe("Comma-separated IDs or names, max 5. Empty string clears");
 
 type ForumTag = ForumChannel["availableTags"][number];
 
@@ -128,76 +126,17 @@ const describeTag = (tag: ForumTag) => ({
 
 export const forumTools = [
   defineTool({
-    name: "create_forum_channel",
-    title: "Create forum channel",
-    description: "Create a new forum channel in a server.",
-    group: "forums",
-    access: "write",
-    input: z.object({
-      guildId,
-      name: z.string().min(1).max(100).describe("Channel name"),
-      categoryId: snowflake("Category ID")
-        .optional()
-        .describe("Category ID to place the channel in"),
-      topic: z
-        .string()
-        .max(4096)
-        .optional()
-        .describe("Default post guidelines, shown at the top of the forum"),
-      nsfw: z.boolean().optional().describe("Whether the channel is NSFW"),
-      slowmode: z
-        .number()
-        .int()
-        .min(0)
-        .max(MAX_SLOWMODE_SECONDS)
-        .optional()
-        .describe("Default slowmode for new posts, in seconds (0-21600)"),
-      position: z
-        .number()
-        .int()
-        .min(0)
-        .optional()
-        .describe("Position in the channel list"),
-      reason: auditReason,
-    }),
-    run: async (args, ctx) => {
-      const guild = ctx.guildId(args.guildId);
-      if (args.categoryId !== undefined)
-        await requireCategory(ctx, guild, args.categoryId);
-      const forum = await ctx.client.rest.guilds.createChannel(
-        guild,
-        ChannelTypes.GUILD_FORUM,
-        {
-          name: args.name,
-          ...definedOnly({
-            parentID: args.categoryId,
-            topic: args.topic,
-            nsfw: args.nsfw,
-            rateLimitPerUser: args.slowmode,
-            position: args.position,
-          }),
-          ...reasonOption(args.reason),
-        },
-      );
-      return describeForum(forum);
-    },
-  }),
-  defineTool({
     name: "edit_forum_channel",
     title: "Edit forum channel",
     description:
-      "Edit a forum channel: name, topic, NSFW, slowmode, category, position, default sort order, and default layout.",
+      "Edit a forum channel: name, topic, NSFW, slowmode, category, position, sort, layout.",
     group: "forums",
     access: "write",
     input: z.object({
       guildId,
       channelId: forumId,
-      name: z.string().min(1).max(100).optional().describe("New channel name"),
-      topic: z
-        .string()
-        .max(4096)
-        .optional()
-        .describe("New topic, shown as the post guidelines"),
+      name: z.string().min(1).max(100).optional(),
+      topic: z.string().max(4096).optional().describe("Post guidelines"),
       nsfw: z.boolean().optional().describe("Whether the channel is NSFW"),
       slowmode: z
         .number()
@@ -210,23 +149,15 @@ export const forumTools = [
         .string()
         .max(20)
         .optional()
-        .describe(
-          "Category ID to move the channel to. Pass an empty string to remove it from its category.",
-        ),
+        .describe("Empty string removes the category"),
       position: z
         .number()
         .int()
         .min(0)
         .optional()
         .describe("Position in the channel list"),
-      defaultSort: z
-        .enum(["RECENT_ACTIVITY", "CREATION_TIME"])
-        .optional()
-        .describe("Default sort order of the posts"),
-      defaultLayout: z
-        .enum(["LIST_VIEW", "GALLERY_VIEW"])
-        .optional()
-        .describe("Default layout of the posts"),
+      defaultSort: z.enum(["RECENT_ACTIVITY", "CREATION_TIME"]).optional(),
+      defaultLayout: z.enum(["LIST_VIEW", "GALLERY_VIEW"]).optional(),
       reason: auditReason,
     }),
     run: async (args, ctx) => {
@@ -259,13 +190,13 @@ export const forumTools = [
         forum.id,
         { ...fields, ...reasonOption(args.reason) },
       );
-      return describeForum(edited);
+      return { id: edited.id, name: edited.name };
     },
   }),
   defineTool({
     name: "list_forum_channels",
     title: "List forum channels",
-    description: "List all forum channels in a server.",
+    description: "List forum channels.",
     group: "forums",
     access: "read",
     input: z.object({ guildId }),
@@ -289,8 +220,7 @@ export const forumTools = [
   defineTool({
     name: "get_forum_channel_info",
     title: "Get forum channel info",
-    description:
-      "Get details of a forum channel, including its settings and tags.",
+    description: "Get a forum channel's settings and tags.",
     group: "forums",
     access: "read",
     input: z.object({ guildId, channelId: forumId }),
@@ -307,37 +237,17 @@ export const forumTools = [
     },
   }),
   defineTool({
-    name: "list_forum_tags",
-    title: "List forum tags",
-    description: "List the tags available in a forum channel.",
-    group: "forums",
-    access: "read",
-    input: z.object({ guildId, channelId: forumId }),
-    run: async (args, ctx) => {
-      const forum = await guildForum(
-        ctx,
-        ctx.guildId(args.guildId),
-        args.channelId,
-      );
-      return forum.availableTags.map(describeTag);
-    },
-  }),
-  defineTool({
     name: "create_forum_post",
     title: "Create forum post",
     description:
-      "Create a new post (thread) with an initial message in a forum channel, optionally with tags.",
+      "Create a forum post (thread) with a first message and optional tags.",
     group: "forums",
     access: "write",
     input: z.object({
       guildId,
       channelId: forumId,
-      title: z.string().min(1).max(100).describe("Post title"),
-      message: z
-        .string()
-        .min(1)
-        .max(2000)
-        .describe("Content of the initial message"),
+      title: z.string().min(1).max(100),
+      message: z.string().min(1).max(2000),
       tagIds,
       reason: auditReason,
     }),
@@ -364,18 +274,13 @@ export const forumTools = [
             ...reasonOption(args.reason),
           },
         );
-      return {
-        id: post.id,
-        name: post.name,
-        forumId: forum.id,
-        appliedTags: post.appliedTags,
-      };
+      return { id: post.id, name: post.name, appliedTags: post.appliedTags };
     },
   }),
   defineTool({
     name: "list_forum_posts",
     title: "List forum posts",
-    description: "List the active posts (threads) in a forum channel.",
+    description: "List active posts (threads) of a forum channel.",
     group: "forums",
     access: "read",
     input: z.object({ guildId, channelId: forumId }),
@@ -403,16 +308,15 @@ export const forumTools = [
   defineTool({
     name: "modify_forum_post",
     title: "Modify forum post",
-    description:
-      "Modify a forum post: lock or unlock, archive or unarchive, pin or unpin, or change its applied tags.",
+    description: "Lock, archive, pin, or retag a forum post.",
     group: "forums",
     access: "write",
     input: z.object({
       guildId,
       postId,
-      locked: z.boolean().optional().describe("Whether the post is locked"),
-      archived: z.boolean().optional().describe("Whether the post is archived"),
-      pinned: z.boolean().optional().describe("Whether the post is pinned"),
+      locked: z.boolean().optional(),
+      archived: z.boolean().optional(),
+      pinned: z.boolean().optional(),
       tagIds,
       reason: auditReason,
     }),
