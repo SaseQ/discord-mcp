@@ -68,6 +68,7 @@ export const moderationTools = [
         access: "write",
         value: "timeout",
         params: ["durationSeconds"],
+        required: ["durationSeconds"],
         note: "timeout mutes them for durationSeconds, at most 28 days; 0 removes it.",
       },
       {
@@ -76,6 +77,7 @@ export const moderationTools = [
         access: "write",
         value: "move",
         params: ["channelId"],
+        required: ["channelId"],
         note: "move takes a connected member to the voice or stage channelId.",
       },
       {

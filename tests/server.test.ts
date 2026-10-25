@@ -194,6 +194,16 @@ describe("merged tools", () => {
     expect(properties).not.toContain("channelId");
   });
 
+  test("a parameter that every enabled part needs is listed as required", async () => {
+    const required = async (allow: string[]) =>
+      (await listTools({ allow, deny: [] })).find(
+        (t) => t.name === "moderate_member",
+      )?.inputSchema["required"];
+    expect(await required(["timeout_member"])).toContain("durationSeconds");
+    expect(await required(["move_member"])).toContain("channelId");
+    expect(await required(["*"])).not.toContain("durationSeconds");
+  });
+
   test("the name of a merged tool selects all of its actions", async () => {
     const policy = { allow: ["*"], deny: ["moderate_member"] };
     expect(await choices(policy, "moderate_member", "action")).toBeUndefined();

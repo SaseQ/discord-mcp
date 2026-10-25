@@ -40,6 +40,8 @@ export interface Part extends ToolTraits {
   note: string;
   /** The parameters that only some parts take. A call gives them only with a value whose part lists them. */
   params?: readonly string[];
+  /** The params that a call of this part must give. The listed schema requires those that every enabled part needs. */
+  required?: readonly string[];
 }
 
 export interface MergedSpec<S extends z.ZodObject>
@@ -62,8 +64,13 @@ export const defineMergedTool = <S extends z.ZodObject>(
     const hidden = [...owned].filter((param) => !kept.has(param));
     const values = parts.map((p) => p.value) as [string, ...string[]];
     // With no key and no part that takes none of them, a call must give the kept params.
-    const required =
-      !spec.key && parts.every((p) => p.params?.length) ? [...kept] : [];
+    const required = spec.key
+      ? [...kept].filter((param) =>
+          parts.every((p) => p.required?.includes(param)),
+        )
+      : parts.every((p) => p.params?.length)
+        ? [...kept]
+        : [];
     const access =
       ACCESS_LEVELS[
         Math.max(...parts.map((p) => ACCESS_LEVELS.indexOf(p.access)))
