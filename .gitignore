@@ -17,6 +17,8 @@ AGENTS.md
 
 # Local runtime secrets
 .env
+.env.*
+!.env.example
 
 # Local docs/spec drafts (not part of release commits)
 ai-docs/
