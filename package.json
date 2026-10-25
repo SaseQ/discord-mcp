@@ -13,9 +13,9 @@
     "discord-mcp": "./src/main.ts"
   },
   "engines": {
-    "bun": ">=1.4.3"
+    "bun": ">=1.4.4"
   },
-  "packageManager": "bun@1.4.3",
+  "packageManager": "bun@1.4.4",
   "scripts": {
     "start": "bun run src/main.ts",
     "dev": "bun --watch run src/main.ts",
@@ -27,16 +27,16 @@
     "tools": "bun run scripts/list-tools.ts"
   },
   "dependencies": {
-    "@modelcontextprotocol/server": "2.3.1",
+    "@modelcontextprotocol/server": "2.4.0",
     "oceanic.js": "1.15.0",
-    "zod": "4.6.6"
+    "zod": "4.6.7"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.15",
-    "@commitlint/cli": "21.2.3",
-    "@commitlint/config-conventional": "21.2.3",
-    "@types/bun": "1.4.2",
+    "@biomejs/biome": "2.6.3",
+    "@commitlint/cli": "21.2.4",
+    "@commitlint/config-conventional": "21.2.4",
+    "@types/bun": "1.4.4",
     "@types/node": "26.6.5",
-    "markdownlint-cli2": "0.23.3"
+    "markdownlint-cli2": "0.24.0"
   }
 }
