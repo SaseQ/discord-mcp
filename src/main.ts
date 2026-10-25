@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
+import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { Client, DiscordRESTError } from "oceanic.js";
 import { ConfigError, loadConfig } from "./config.ts";
 import { createContext } from "./context.ts";
@@ -44,9 +44,9 @@ const main = async () => {
     const http = serveHttp(config.http, () => createServer(tools, ctx));
     stop = http.stop;
   } else {
-    const server = createServer(tools, ctx);
-    await server.connect(new StdioServerTransport());
-    stop = () => server.close();
+    // serveStdio answers both the 2026-07-28 stateless protocol and the legacy handshake.
+    const stdio = serveStdio(() => createServer(tools, ctx));
+    stop = () => stdio.close();
   }
 
   const shutdown = async () => {
