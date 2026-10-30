@@ -10,11 +10,15 @@ import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
 import net.dv8tion.jda.api.entities.channel.concrete.ThreadChannel;
 import net.dv8tion.jda.api.entities.channel.middleman.MessageChannel;
 import net.dv8tion.jda.api.entities.emoji.Emoji;
+import net.dv8tion.jda.api.entities.messages.MessagePoll;
+import net.dv8tion.jda.api.utils.messages.MessagePollBuilder;
+import net.dv8tion.jda.api.utils.messages.MessagePollData;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -74,6 +78,66 @@ public class MessageService {
         }
         Message sentMessage = channel.sendMessage(message).complete();
         return "Message sent successfully. Message link: " + sentMessage.getJumpUrl();
+    }
+
+    /**
+     * Creates a poll message in a specified Discord channel.
+     *
+     * @param channelId        The ID of the channel where the poll will be sent.
+     * @param question         The poll question (at most 300 characters).
+     * @param answers          The poll answers (2-10, each at most 55 characters).
+     * @param durationHours    Optional duration of the poll in hours (1-168, default 24).
+     * @param allowMultiselect Optional flag allowing multiple answers to be selected (default false).
+     * @return A confirmation message with the ID and link of the created poll message.
+     */
+    @Tool(name = "create_poll", description = "Create a poll message in a specific channel")
+    public String createPoll(@ToolParam(description = "Discord channel ID") String channelId,
+                             @ToolParam(description = "Poll question (max 300 characters)") String question,
+                             @ToolParam(description = "Poll answers (2-10, each max 55 characters)") List<String> answers,
+                             @ToolParam(description = "Poll duration in hours (1-168, default 24)", required = false) Integer durationHours,
+                             @ToolParam(description = "Allow multiple answers to be selected (default false)", required = false) Boolean allowMultiselect) {
+        if (channelId == null || channelId.isBlank()) {
+            throw new IllegalArgumentException("channelId cannot be null or blank");
+        }
+        if (question == null || question.isBlank()) {
+            throw new IllegalArgumentException("question cannot be null or blank");
+        }
+        if (question.length() > MessagePoll.MAX_QUESTION_TEXT_LENGTH) {
+            throw new IllegalArgumentException("question must be at most " + MessagePoll.MAX_QUESTION_TEXT_LENGTH + " characters");
+        }
+        if (answers == null || answers.size() < 2) {
+            throw new IllegalArgumentException("answers must contain at least 2 entries");
+        }
+        if (answers.size() > MessagePoll.MAX_ANSWERS) {
+            throw new IllegalArgumentException("answers must contain at most " + MessagePoll.MAX_ANSWERS + " entries");
+        }
+        for (String answer : answers) {
+            if (answer == null || answer.isBlank()) {
+                throw new IllegalArgumentException("answers must contain nonblank entries");
+            }
+            if (answer.length() > MessagePoll.MAX_ANSWER_TEXT_LENGTH) {
+                throw new IllegalArgumentException("each answer must be at most " + MessagePoll.MAX_ANSWER_TEXT_LENGTH + " characters");
+            }
+        }
+        int hours = durationHours != null ? durationHours : 24;
+        if (hours < 1 || hours > MessagePoll.MAX_DURATION_HOURS) {
+            throw new IllegalArgumentException("durationHours must be between 1 and " + MessagePoll.MAX_DURATION_HOURS);
+        }
+        boolean multiselect = allowMultiselect != null && allowMultiselect;
+
+        MessageChannel channel = getMessageChannelById(channelId);
+        if (channel == null) {
+            throw new IllegalArgumentException("Channel not found by channelId");
+        }
+
+        MessagePollBuilder pollBuilder = MessagePollData.builder(question)
+                .setDuration(Duration.ofHours(hours))
+                .setMultiAnswer(multiselect);
+        for (String answer : answers) {
+            pollBuilder.addAnswer(answer);
+        }
+        Message sentMessage = channel.sendMessagePoll(pollBuilder.build()).complete();
+        return "Poll sent successfully. Message ID: " + sentMessage.getId() + ". Message link: " + sentMessage.getJumpUrl();
     }
 
     /**

@@ -334,6 +334,18 @@ Remote MCP Connector:
 - [`remove_reaction`](): Remove a specified reaction (emoji) from a message
 - [`get_message`](): Get a single message by ID in the same format as `read_messages`; replies include the message they reply to
 - [`get_message_replies`](): Find replies to a message by scanning the messages posted after it (up to 1000)
+- [`create_poll`](): Create a poll message in a specific channel: question up to 300 characters, 2-10 answers of up to 55 characters each, `durationHours` 1-168 (default 24), `allowMultiselect` boolean (default false). Requires View Channel, Send Messages (or Send Messages in Threads), and Send Polls permissions
+
+Example call for `create_poll` (all fields except the channel, question and answers are optional):
+```json
+{
+  "channelId": "123456789012345678",
+  "question": "What should the bot do at the weekend?",
+  "answers": ["Post a reminder", "Stay quiet", "Both"],
+  "durationHours": 48,
+  "allowMultiselect": true
+}
+```
 
 #### Channel Management
 - [`create_text_channel`](): Create a new text channel
