@@ -45,7 +45,7 @@ public class RoleService {
     public String listRoles(@ToolParam(description = "Discord server ID", required = false) String guildId) {
         guildId = resolveGuildId(guildId);
         if (guildId == null || guildId.isEmpty()) {
-            throw new IllegalArgumentException("guildId cannot be null");
+            throw new IllegalArgumentException("guildId cannot be null. Use list_servers to find the ID of the server.");
         }
 
         Guild guild = jda.getGuildById(guildId);
@@ -101,7 +101,7 @@ public class RoleService {
 
         guildId = resolveGuildId(guildId);
         if (guildId == null || guildId.isEmpty()) {
-            throw new IllegalArgumentException("guildId cannot be null");
+            throw new IllegalArgumentException("guildId cannot be null. Use list_servers to find the ID of the server.");
         }
         if (name == null || name.isEmpty()) {
             throw new IllegalArgumentException("name cannot be null");
@@ -172,7 +172,7 @@ public class RoleService {
 
         guildId = resolveGuildId(guildId);
         if (guildId == null || guildId.isEmpty()) {
-            throw new IllegalArgumentException("guildId cannot be null");
+            throw new IllegalArgumentException("guildId cannot be null. Use list_servers to find the ID of the server.");
         }
         if (roleId == null || roleId.isEmpty()) {
             throw new IllegalArgumentException("roleId cannot be null");
@@ -253,7 +253,7 @@ public class RoleService {
 
         guildId = resolveGuildId(guildId);
         if (guildId == null || guildId.isEmpty()) {
-            throw new IllegalArgumentException("guildId cannot be null");
+            throw new IllegalArgumentException("guildId cannot be null. Use list_servers to find the ID of the server.");
         }
         if (roleId == null || roleId.isEmpty()) {
             throw new IllegalArgumentException("roleId cannot be null");
@@ -302,7 +302,7 @@ public class RoleService {
 
         guildId = resolveGuildId(guildId);
         if (guildId == null || guildId.isEmpty()) {
-            throw new IllegalArgumentException("guildId cannot be null");
+            throw new IllegalArgumentException("guildId cannot be null. Use list_servers to find the ID of the server.");
         }
         if (userId == null || userId.isEmpty()) {
             throw new IllegalArgumentException("userId cannot be null");
@@ -364,7 +364,7 @@ public class RoleService {
 
         guildId = resolveGuildId(guildId);
         if (guildId == null || guildId.isEmpty()) {
-            throw new IllegalArgumentException("guildId cannot be null");
+            throw new IllegalArgumentException("guildId cannot be null. Use list_servers to find the ID of the server.");
         }
         if (userId == null || userId.isEmpty()) {
             throw new IllegalArgumentException("userId cannot be null");

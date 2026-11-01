@@ -36,7 +36,7 @@ public class ForumService {
         if ((guildId == null || guildId.isEmpty()) && defaultGuildId != null && !defaultGuildId.isEmpty()) {
             guildId = defaultGuildId;
         }
-        if (guildId == null || guildId.isEmpty()) throw new IllegalArgumentException("guildId cannot be null");
+        if (guildId == null || guildId.isEmpty()) throw new IllegalArgumentException("guildId cannot be null. Use list_servers to find the ID of the server.");
         Guild guild = jda.getGuildById(guildId);
         if (guild == null) throw new IllegalArgumentException("Discord server not found by guildId");
         return guild;

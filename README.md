@@ -313,6 +313,7 @@ Remote MCP Connector:
 ## 🛠️ Available Tools
 
 #### Server Information
+- [`list_servers`](): List all Discord servers the bot is a member of, with their IDs
 - [`get_server_info`](): Get detailed discord server information
 
 #### User Management
