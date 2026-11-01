@@ -143,7 +143,7 @@ public class ThreadService {
     public String listActiveThreads(@ToolParam(description = "Discord server ID", required = false) String guildId) {
         guildId = resolveGuildId(guildId);
         if (guildId == null || guildId.isEmpty()) {
-            throw new IllegalArgumentException("guildId cannot be null");
+            throw new IllegalArgumentException("guildId cannot be null. Use list_servers to find the ID of the server.");
         }
 
         Guild guild = jda.getGuildById(guildId);

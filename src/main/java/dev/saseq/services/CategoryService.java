@@ -43,7 +43,7 @@ public class CategoryService {
                                  @ToolParam(description = "Discord category name") String name) {
         guildId = resolveGuildId(guildId);
         if (guildId == null || guildId.isEmpty()) {
-            throw new IllegalArgumentException("guildId cannot be null");
+            throw new IllegalArgumentException("guildId cannot be null. Use list_servers to find the ID of the server.");
         }
         if (name == null || name.isEmpty()) {
             throw new IllegalArgumentException("name cannot be null");
@@ -69,7 +69,7 @@ public class CategoryService {
                                  @ToolParam(description = "Discord category ID") String categoryId) {
         guildId = resolveGuildId(guildId);
         if (guildId == null || guildId.isEmpty()) {
-            throw new IllegalArgumentException("guildId cannot be null");
+            throw new IllegalArgumentException("guildId cannot be null. Use list_servers to find the ID of the server.");
         }
         if (categoryId == null || categoryId.isEmpty()) {
             throw new IllegalArgumentException("categoryId cannot be null");
@@ -102,7 +102,7 @@ public class CategoryService {
                                @ToolParam(description = "Reason for audit log", required = false) String reason) {
         guildId = resolveGuildId(guildId);
         if (guildId == null || guildId.isEmpty()) {
-            throw new IllegalArgumentException("guildId cannot be null");
+            throw new IllegalArgumentException("guildId cannot be null. Use list_servers to find the ID of the server.");
         }
         if (categoryId == null || categoryId.isEmpty()) {
             throw new IllegalArgumentException("categoryId cannot be null");
@@ -131,7 +131,7 @@ public class CategoryService {
                                @ToolParam(description = "Discord category name") String categoryName) {
         guildId = resolveGuildId(guildId);
         if (guildId == null || guildId.isEmpty()) {
-            throw new IllegalArgumentException("guildId cannot be null");
+            throw new IllegalArgumentException("guildId cannot be null. Use list_servers to find the ID of the server.");
         }
         if (categoryName == null || categoryName.isEmpty()) {
             throw new IllegalArgumentException("categoryName cannot be null");
@@ -168,7 +168,7 @@ public class CategoryService {
                                          @ToolParam(description = "Discord category ID") String categoryId) {
         guildId = resolveGuildId(guildId);
         if (guildId == null || guildId.isEmpty()) {
-            throw new IllegalArgumentException("guildId cannot be null");
+            throw new IllegalArgumentException("guildId cannot be null. Use list_servers to find the ID of the server.");
         }
         if (categoryId == null || categoryId.isEmpty()) {
             throw new IllegalArgumentException("categoryId cannot be null");
