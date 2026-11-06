@@ -140,6 +140,56 @@ public class MessageService {
     }
 
     /**
+     * Pins a message in a text channel, announcement channel or thread.
+     * The bot needs the Pin Messages permission.
+     *
+     * @param channelId The ID of the channel containing the message.
+     * @param messageId The ID of the message to pin.
+     * @return A confirmation message with a link to the pinned message.
+     */
+    @Tool(name = "pin_message", description = "Pin a message in a text channel, announcement channel or thread")
+    public String pinMessage(@ToolParam(description = "Discord channel ID") String channelId,
+                             @ToolParam(description = "Specific message ID") String messageId) {
+        Message message = retrieveMessageForPin(channelId, messageId);
+        message.getChannel().pinMessageById(messageId).complete();
+        return "Message pinned successfully. Message link: " + message.getJumpUrl();
+    }
+
+    /**
+     * Unpins a message in a text channel, announcement channel or thread.
+     *
+     * @param channelId The ID of the channel containing the message.
+     * @param messageId The ID of the message to unpin.
+     * @return A confirmation message with a link to the unpinned message.
+     */
+    @Tool(name = "unpin_message", description = "Unpin a pinned message in a text channel, announcement channel or thread")
+    public String unpinMessage(@ToolParam(description = "Discord channel ID") String channelId,
+                               @ToolParam(description = "Specific message ID") String messageId) {
+        Message message = retrieveMessageForPin(channelId, messageId);
+        message.getChannel().unpinMessageById(messageId).complete();
+        return "Message unpinned successfully. Message link: " + message.getJumpUrl();
+    }
+
+    // Fetches the message first so a wrong channel/message ID fails clearly before any pin change.
+    private Message retrieveMessageForPin(String channelId, String messageId) {
+        if (channelId == null || channelId.isEmpty()) {
+            throw new IllegalArgumentException("channelId cannot be null");
+        }
+        if (messageId == null || messageId.isEmpty()) {
+            throw new IllegalArgumentException("messageId cannot be null");
+        }
+        MessageChannel channel = getMessageChannelById(channelId);
+        if (channel == null) {
+            throw new IllegalArgumentException("Channel not found by channelId");
+        }
+        Message message = channel.retrieveMessageById(messageId).complete();
+        if (message == null) {
+            throw new IllegalArgumentException("Message not found by messageId");
+        }
+        return message;
+    }
+
+    /**
      * Reads message history from a specified Discord channel.
      *
      * @param channelId The ID of the channel from which to read messages.
