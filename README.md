@@ -328,6 +328,8 @@ Remote MCP Connector:
 - [`send_message`](): Send a message to a specific channel
 - [`edit_message`](): Edit a message from a specific channel
 - [`delete_message`](): Delete a message from a specific channel
+- [`pin_message`](): Pin a message in a text channel, announcement channel or thread
+- [`unpin_message`](): Unpin a pinned message in a text channel, announcement channel or thread
 - [`read_messages`](): Read message history from a specific channel (includes author IDs, reply markers, attachment metadata, supports `count` 1-100 and optional cursor: `before` or `after` or `around`)
 - [`search_messages`](): Search the most recent messages of a channel or thread for text (case-insensitive scan of up to 1000 messages, newest first)
 - [`add_reaction`](): Add a reaction (emoji) to a specific message
@@ -408,10 +410,13 @@ Remote MCP Connector:
 
 #### Forum Management
 - [`create_forum_channel`](): Create a new forum channel
-- [`edit_forum_channel`](): Edit settings of a forum channel (name, topic, nsfw, slowmode, category, position, default sort, default layout)
+- [`edit_forum_channel`](): Edit settings of a forum channel (name, topic, nsfw, slowmode, category, position, default sort, default layout, default reaction emoji, whether a tag is required)
 - [`list_forum_channels`](): List all forum channels in the server
 - [`get_forum_channel_info`](): Get detailed information about a forum channel including tags and settings
 - [`list_forum_tags`](): List all available tags in a forum channel
+- [`create_forum_tag`](): Add a new tag to a forum channel. Existing tags keep their IDs, so posts keep their tags (max 20 tags per forum)
+- [`edit_forum_tag`](): Edit an existing forum tag (name, emoji, moderated). The tag keeps its ID, so posts that already use it keep it
+- [`delete_forum_tag`](): Delete a tag from a forum channel. Posts that use this tag lose it; all other tags keep their IDs
 - [`create_forum_post`](): Create a new forum post (thread) with an initial message in a forum channel
 - [`list_forum_posts`](): List active posts (threads) in a forum channel
 - [`modify_forum_post`](): Modify a forum post: lock/unlock, archive/unarchive, pin/unpin, or change applied tags
