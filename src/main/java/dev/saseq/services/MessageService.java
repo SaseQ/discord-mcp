@@ -10,6 +10,9 @@ import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
 import net.dv8tion.jda.api.entities.channel.concrete.ThreadChannel;
 import net.dv8tion.jda.api.entities.channel.middleman.MessageChannel;
 import net.dv8tion.jda.api.entities.emoji.Emoji;
+import net.dv8tion.jda.api.exceptions.ErrorResponseException;
+import net.dv8tion.jda.api.exceptions.RateLimitedException;
+import net.dv8tion.jda.api.requests.ErrorResponse;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.beans.factory.annotation.Value;
@@ -108,6 +111,39 @@ public class MessageService {
         }
         Message editedMessage = messageById.editMessage(newMessage).complete();
         return "Message edited successfully. Message link: " + editedMessage.getJumpUrl();
+    }
+
+    @Tool(name = "publish_message", description = "Publish an existing announcement message to following channels. "
+            + "Only announcement channels are supported; threads are not. This broadcasts beyond the source server. "
+            + "Already-published messages are reported without republishing.")
+    public String publishMessage(@ToolParam(description = "Discord announcement channel ID") String channelId,
+                                 @ToolParam(description = "ID of the existing message to publish") String messageId) {
+        if (channelId == null || channelId.isBlank()) {
+            throw new IllegalArgumentException("channelId cannot be null or blank");
+        }
+        if (messageId == null || messageId.isBlank()) {
+            throw new IllegalArgumentException("messageId cannot be null or blank");
+        }
+        NewsChannel channel = jda.getNewsChannelById(channelId);
+        if (channel == null) {
+            throw new IllegalArgumentException("Channel not found or is not an announcement channel");
+        }
+        Message message = channel.retrieveMessageById(messageId).complete();
+        if (message.getFlags().contains(Message.MessageFlag.CROSSPOSTED)) {
+            return "Message was already published. Message link: " + message.getJumpUrl();
+        }
+        try {
+            Message published = message.crosspost().complete(false);
+            return "Message published successfully. Message link: " + published.getJumpUrl();
+        } catch (ErrorResponseException e) {
+            if (e.getErrorResponse() == ErrorResponse.ALREADY_CROSSPOSTED) {
+                return "Message was already published. Message link: " + message.getJumpUrl();
+            }
+            throw e;
+        } catch (RateLimitedException e) {
+            throw new IllegalStateException("Discord is rate-limiting publishing; retry after "
+                    + e.getRetryAfter() + " ms", e);
+        }
     }
 
     /**

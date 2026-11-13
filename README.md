@@ -326,6 +326,7 @@ Remote MCP Connector:
 
 #### Message Management
 - [`send_message`](): Send a message to a specific channel
+- [`publish_message`](): Publish an existing message in an announcement channel to its following channels
 - [`edit_message`](): Edit a message from a specific channel
 - [`delete_message`](): Delete a message from a specific channel
 - [`read_messages`](): Read message history from a specific channel (includes author IDs, reply markers, attachment metadata, supports `count` 1-100 and optional cursor: `before` or `after` or `around`)
@@ -334,6 +335,21 @@ Remote MCP Connector:
 - [`remove_reaction`](): Remove a specified reaction (emoji) from a message
 - [`get_message`](): Get a single message by ID in the same format as `read_messages`; replies include the message they reply to
 - [`get_message_replies`](): Find replies to a message by scanning the messages posted after it (up to 1000)
+
+`publish_message(channelId, messageId)` broadcasts an existing announcement beyond the source server.
+Only announcement channels are supported, not text channels, DMs or threads. This adds a broadcast-capable
+write tool for clients using this server's existing access model. Inspect the message with `get_message`
+before publishing; `send_message` does not publish automatically.
+
+The bot needs channel access and message-history access to retrieve the target, plus `SEND_MESSAGES` to
+publish its own message and additionally `MANAGE_MESSAGES` to publish another author's message.
+Already-published messages are reported without republishing. Other Discord permission and lookup errors
+are returned as failures. A publish rate limit reports Discord's retry delay in milliseconds without
+retrying; the initial message lookup can still wait on its own rate limits.
+
+Success confirms Discord accepted publishing and includes the message link. It does not verify delivery
+to every following channel. A connection failure can leave the outcome unknown; inspect or retry the same
+message rather than creating another announcement.
 
 #### Channel Management
 - [`create_text_channel`](): Create a new text channel
