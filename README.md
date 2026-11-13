@@ -326,7 +326,7 @@ Remote MCP Connector:
 
 #### Message Management
 - [`send_message`](): Send a message to a specific channel
-- [`publish_message`](): Publish (crosspost) an existing announcement to following channels
+- [`publish_message`](): Publish (crosspost) an existing announcement message to channels following it in other servers
 - [`edit_message`](): Edit a message from a specific channel
 - [`delete_message`](): Delete a message from a specific channel
 - [`read_messages`](): Read message history from a specific channel (includes author IDs, reply markers, attachment metadata, supports `count` 1-100 and optional cursor: `before` or `after` or `around`)
@@ -335,18 +335,6 @@ Remote MCP Connector:
 - [`remove_reaction`](): Remove a specified reaction (emoji) from a message
 - [`get_message`](): Get a single message by ID in the same format as `read_messages`; replies include the message they reply to
 - [`get_message_replies`](): Find replies to a message by scanning the messages posted after it (up to 1000)
-
-`publish_message(channelId, messageId)` crossposts an existing announcement to channels following it in
-other servers. Connected clients can invoke it using the bot's permissions. Text channels, DMs and
-threads aren't supported. Use `get_message` to check the target; `send_message` does not publish automatically.
-
-The bot needs channel and history access and `SEND_MESSAGES`, plus `MANAGE_MESSAGES` for another author's
-message. Already-published messages return their link without republishing.
-
-Publish rate limits return the retry delay in milliseconds without automatically retrying. The initial
-lookup may still wait on its own limits. Success returns a link confirming Discord accepted the crosspost,
-not delivery to every follower. If the connection fails, inspect or retry the same message before
-creating another.
 
 #### Channel Management
 - [`create_text_channel`](): Create a new text channel
