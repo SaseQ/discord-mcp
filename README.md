@@ -326,6 +326,7 @@ Remote MCP Connector:
 
 #### Message Management
 - [`send_message`](): Send a message to a specific channel
+- [`publish_message`](): Publish (crosspost) an existing announcement message to channels following it in other servers
 - [`edit_message`](): Edit a message from a specific channel
 - [`delete_message`](): Delete a message from a specific channel
 - [`read_messages`](): Read message history from a specific channel (includes author IDs, reply markers, attachment metadata, supports `count` 1-100 and optional cursor: `before` or `after` or `around`)
