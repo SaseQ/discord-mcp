@@ -323,4 +323,38 @@ class ScheduledEventServiceTest {
         verify(event, never()).getManager();
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"1", "2"})
+    void channelCreationKeepsValidationAndUsesOneRecurringWrite(String entityType) {
+        var channel = mock(net.dv8tion.jda.api.entities.channel.middleman.GuildChannel.class);
+        var action = mock(net.dv8tion.jda.api.requests.restaction.ScheduledEventAction.class);
+        when(guild.getGuildChannelById("345")).thenReturn(channel);
+        when(guild.createScheduledEvent(eq("Event"), eq(channel), any())).thenReturn(action);
+        when(api.create(eq(GUILD), any())).thenReturn(DataObject.empty().put("id", EVENT));
+        service.createScheduledEvent(GUILD, "Event", "description", "2030-08-05T20:00:00Z",
+                "2030-08-05T22:00:00Z", entityType, "345", null, "{\"frequency\":2}");
+        verify(action).setDescription("description");
+        verify(action).setEndTime(OffsetDateTime.parse("2030-08-05T22:00:00Z"));
+        verify(action, never()).complete();
+        var body = org.mockito.ArgumentCaptor.forClass(DataObject.class);
+        verify(api).create(eq(GUILD), body.capture());
+        assertThat(body.getValue().getString("channel_id")).isEqualTo("345");
+        assertThat(body.getValue().getInt("entity_type")).isEqualTo(Integer.parseInt(entityType));
+        assertThat(body.getValue().getString("description")).isEqualTo("description");
+        doThrow(new IllegalArgumentException("description validation")).when(action).setDescription("invalid");
+        assertThatThrownBy(() -> service.createScheduledEvent(GUILD, "Event", "invalid",
+                "2030-08-05T20:00:00Z", null, entityType, "345", null, "bad-json"))
+                .hasMessage("description validation");
+        verifyNoMoreInteractions(api);
+    }
+
+    @Test void malformedEnrichmentDiscardsPartialDetailsButKeepsBasicList() {
+        when(guild.getScheduledEvents()).thenReturn(java.util.List.of(event));
+        when(api.list(GUILD, false)).thenReturn(net.dv8tion.jda.api.utils.data.DataArray.fromJson(
+                "[{\"id\":\"234\",\"image\":\"abc123\",\"recurrence_rule\":null},{}]"));
+        assertThat(service.listScheduledEvents(GUILD, null))
+                .contains("Event", "Cover: unavailable", "Recurrence: unavailable", "details unavailable")
+                .doesNotContain("abc123");
+    }
+
 }

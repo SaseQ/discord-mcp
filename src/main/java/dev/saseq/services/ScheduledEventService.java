@@ -7,6 +7,7 @@ import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.entities.ScheduledEvent;
 import net.dv8tion.jda.api.entities.channel.middleman.GuildChannel;
 import net.dv8tion.jda.api.exceptions.ParsingException;
+import net.dv8tion.jda.api.requests.restaction.ScheduledEventAction;
 import net.dv8tion.jda.api.utils.data.DataObject;
 import okhttp3.HttpUrl;
 import org.springframework.ai.tool.annotation.Tool;
@@ -27,6 +28,9 @@ import java.util.stream.Collectors;
 
 @Service
 public class ScheduledEventService {
+
+    private static final int MAX_COVER_BYTES = 5 * 1024 * 1024;
+    private static final byte[] PNG_SIGNATURE = {(byte)137, 80, 78, 71, 13, 10, 26, 10};
 
     private final JDA jda;
     private final ScheduledEventApi api;
@@ -158,6 +162,24 @@ public class ScheduledEventService {
         int type = Integer.parseInt(entityType);
         OffsetDateTime startTime = parseTime(scheduledStartTime);
 
+        ScheduledEventAction action = prepareCreationAction(guild, name, description, startTime,
+                scheduledEndTime, type, channelId, location);
+
+        if (provided(recurrenceRule)) {
+            DataObject rule = RecurrenceRule.parse(recurrenceRule, scheduledStartTime);
+            if (rule != null) {
+                DataObject body = buildRecurringCreation(name, description, startTime, scheduledEndTime,
+                        type, channelId, location, rule);
+                return "Created scheduled event:\n" + formatSavedEvent(api.create(guild.getId(), body));
+            }
+        }
+        ScheduledEvent event = action.complete();
+        return "Created scheduled event:\n" + formatEvent(event);
+    }
+
+    private ScheduledEventAction prepareCreationAction(Guild guild, String name, String description,
+                                                        OffsetDateTime startTime, String scheduledEndTime,
+                                                        int type, String channelId, String location) {
         var action = switch (type) {
             case 1, 2 -> {
                 if (channelId == null || channelId.isEmpty())
@@ -181,25 +203,24 @@ public class ScheduledEventService {
             action.setEndTime(parseTime(scheduledEndTime));
         }
 
-        if (provided(recurrenceRule)) {
-            DataObject rule = RecurrenceRule.parse(recurrenceRule, scheduledStartTime);
-            if (rule != null) {
-                DataObject body = DataObject.empty().put("name", name).put("privacy_level", 2)
-                        .put("entity_type", type).put("scheduled_start_time", startTime.toString())
-                        .put("recurrence_rule", rule.toMap());
-                if (provided(description)) body.put("description", description);
-                if (provided(scheduledEndTime)) {
-                    OffsetDateTime end = parseTime(scheduledEndTime);
-                    if (!end.isAfter(startTime)) throw new IllegalArgumentException("End must be after start");
-                    body.put("scheduled_end_time", end.toString());
-                }
-                if (type == 3) body.put("entity_metadata", Map.of("location", location));
-                else body.put("channel_id", channelId);
-                return "Created scheduled event:\n" + formatSavedEvent(api.create(guild.getId(), body));
-            }
+        return action;
+    }
+
+    private DataObject buildRecurringCreation(String name, String description, OffsetDateTime startTime,
+                                               String scheduledEndTime, int type, String channelId,
+                                               String location, DataObject rule) {
+        DataObject body = DataObject.empty().put("name", name).put("privacy_level", 2)
+                .put("entity_type", type).put("scheduled_start_time", startTime.toString())
+                .put("recurrence_rule", rule.toMap());
+        if (provided(description)) body.put("description", description);
+        if (provided(scheduledEndTime)) {
+            OffsetDateTime end = parseTime(scheduledEndTime);
+            if (!end.isAfter(startTime)) throw new IllegalArgumentException("End must be after start");
+            body.put("scheduled_end_time", end.toString());
         }
-        ScheduledEvent event = action.complete();
-        return "Created scheduled event:\n" + formatEvent(event);
+        if (type == 3) body.put("entity_metadata", Map.of("location", location));
+        else body.put("channel_id", channelId);
+        return body;
     }
 
     @Tool(name = "edit_guild_scheduled_event", description = "Modify details of an existing event or change its status (start, complete, cancel)")
@@ -218,36 +239,15 @@ public class ScheduledEventService {
         ScheduledEvent event = getEvent(guild, eventId);
 
         OffsetDateTime newStart = provided(scheduledStartTime) ? parseTime(scheduledStartTime) : null;
-        Integer newStatus = provided(status) ? Integer.parseInt(status) : null;
-        if (newStatus != null && (newStatus < 1 || newStatus > 4)) {
-            throw new IllegalArgumentException("status must be 1 (Scheduled), 2 (Active), 3 (Completed), or 4 (Canceled)");
-        }
-        DataObject current = null;
-        OffsetDateTime newEnd = null;
-        if (newStart != null || provided(scheduledEndTime) || provided(recurrenceRule)) {
-            current = api.get(guild.getId(), eventId);
-            if (newStart != null || provided(scheduledEndTime)) newEnd = resolveEndTime(current, scheduledStartTime, scheduledEndTime);
-        }
-        boolean changesRecurrence = provided(recurrenceRule);
-        DataObject rule = null;
-        if (changesRecurrence) {
-            String anchor = recurrenceRule.trim().equals("null") ? null
-                    : (newStart == null ? current.getString("scheduled_start_time") : scheduledStartTime);
-            rule = RecurrenceRule.parse(recurrenceRule, anchor);
-        } else if (newStart != null) {
-            if (!current.hasKey("recurrence_rule")) throw new IllegalArgumentException("Current recurrence unavailable");
-            if (!current.isNull("recurrence_rule")) {
-                try { rule = RecurrenceRule.move(current.getObject("recurrence_rule"), scheduledStartTime); }
-                catch (RuntimeException e) { throw new IllegalArgumentException("Cannot safely move the current recurrence", e); }
-                changesRecurrence = true;
-            }
-        }
-        if (changesRecurrence) {
+        Integer newStatus = parseStatusCode(status);
+        DataObject current = readCurrentEventForEdit(guild, eventId, newStart, scheduledEndTime, recurrenceRule);
+        OffsetDateTime newEnd = newStart != null || provided(scheduledEndTime)
+                ? resolveEndTime(current, scheduledStartTime, scheduledEndTime) : null;
+        DataObject body = buildRecurrenceUpdate(current, scheduledStartTime, recurrenceRule);
+        if (body != null) {
             // Raw writes bypass the manager, so retain its validation and location conversion.
             validateRecurrenceEditText(name, description, location);
             validateRecurrenceEditTimes(current, newStart, newEnd);
-            DataObject body = DataObject.empty();
-            if (rule == null) body.putNull("recurrence_rule"); else body.put("recurrence_rule", rule.toMap());
             if (provided(name)) body.put("name", name);
             if (provided(description)) body.put("description", description);
             if (provided(location)) {
@@ -258,6 +258,48 @@ public class ScheduledEventService {
             if (newEnd != null) body.put("scheduled_end_time", newEnd.toString());
             return "Successfully updated scheduled event:\n" + formatSavedEvent(api.edit(guild.getId(), eventId, body));
         }
+        saveStandardEdit(event, name, description, location, newStatus, newStart, newEnd);
+        return "Successfully updated scheduled event: " + event.getName() + " (ID: " + event.getId() + ")";
+    }
+
+    private static Integer parseStatusCode(String status) {
+        Integer code = provided(status) ? Integer.parseInt(status) : null;
+        if (code != null && (code < 1 || code > 4)) {
+            throw new IllegalArgumentException("status must be 1 (Scheduled), 2 (Active), 3 (Completed), or 4 (Canceled)");
+        }
+        return code;
+    }
+
+    private DataObject readCurrentEventForEdit(Guild guild, String eventId, OffsetDateTime newStart,
+                                               String scheduledEndTime, String recurrenceRule) {
+        if (newStart != null || provided(scheduledEndTime) || provided(recurrenceRule)) {
+            return api.get(guild.getId(), eventId);
+        }
+        return null;
+    }
+
+    private DataObject buildRecurrenceUpdate(DataObject current, String scheduledStartTime, String recurrenceRule) {
+        DataObject rule;
+        if (provided(recurrenceRule)) {
+            String anchor = recurrenceRule.trim().equals("null") ? null
+                    : (provided(scheduledStartTime) ? scheduledStartTime : current.getString("scheduled_start_time"));
+            rule = RecurrenceRule.parse(recurrenceRule, anchor);
+        } else {
+            if (!provided(scheduledStartTime)) return null;
+            if (!current.hasKey("recurrence_rule")) throw new IllegalArgumentException("Current recurrence unavailable");
+            if (current.isNull("recurrence_rule")) return null;
+            try {
+                rule = RecurrenceRule.move(current.getObject("recurrence_rule"), scheduledStartTime);
+            } catch (RuntimeException e) {
+                throw new IllegalArgumentException("Cannot safely move the current recurrence", e);
+            }
+        }
+        return rule == null ? DataObject.empty().putNull("recurrence_rule")
+                : DataObject.empty().put("recurrence_rule", rule.toMap());
+    }
+
+    private void saveStandardEdit(ScheduledEvent event, String name, String description, String location,
+                                  Integer newStatus, OffsetDateTime newStart, OffsetDateTime newEnd) {
         var manager = event.getManager();
         if (newEnd != null) manager.setEndTime(newEnd);
         if (name != null && !name.isEmpty()) manager.setName(name);
@@ -275,7 +317,6 @@ public class ScheduledEventService {
         }
 
         manager.complete();
-        return "Successfully updated scheduled event: " + event.getName() + " (ID: " + event.getId() + ")";
     }
 
     private static void validateRecurrenceEditText(String name, String description, String location) {
@@ -321,24 +362,36 @@ public class ScheduledEventService {
             @ToolParam(description = "Discord server ID", required = false) String guildId,
             @ToolParam(description = "ID of the scheduled event") String eventId,
             @ToolParam(description = "Direct HTTPS PNG or JPEG image URL") String imageUrl) {
-        var url = imageUrl == null ? null : HttpUrl.parse(imageUrl);
-        if (url == null || !url.isHttps()) throw new IllegalArgumentException("imageUrl must use HTTPS");
+        validateCoverUrl(imageUrl);
         Guild guild = getGuild(guildId);
         DataObject current = api.get(guild.getId(), eventId);
+        validateCoverTarget(current, eventId);
+        Icon icon = downloadCoverIcon(imageUrl);
+        DataObject result = api.edit(guild.getId(), eventId, DataObject.empty().put("image", icon.getEncoding()));
+        return "Updated scheduled event cover (ID: " + eventId + "). Cover: " + coverUrl(result, eventId);
+    }
+
+    private static void validateCoverUrl(String imageUrl) {
+        var url = imageUrl == null ? null : HttpUrl.parse(imageUrl);
+        if (url == null || !url.isHttps()) throw new IllegalArgumentException("imageUrl must use HTTPS");
+    }
+
+    private static void validateCoverTarget(DataObject current, String eventId) {
         if (!eventId.equals(current.getString("id", null))) throw new IllegalArgumentException("Event response unavailable");
         int status = current.getInt("status");
         if (status != 1 && status != 2) throw new IllegalArgumentException("Event is not editable");
-        byte[] bytes = RemoteFetchGuard.fetch(imageUrl, 5 * 1024 * 1024, "image");
+    }
+
+    private static Icon downloadCoverIcon(String imageUrl) {
+        byte[] bytes = RemoteFetchGuard.fetch(imageUrl, MAX_COVER_BYTES, "image");
         Icon.IconType type;
-        byte[] png = {(byte)137,80,78,71,13,10,26,10};
-        if (bytes.length >= 8 && Arrays.equals(Arrays.copyOf(bytes, 8), png)) {
+        if (bytes.length >= PNG_SIGNATURE.length
+                && Arrays.equals(Arrays.copyOf(bytes, PNG_SIGNATURE.length), PNG_SIGNATURE)) {
             type = Icon.IconType.PNG;
         } else if (bytes.length >= 3 && (bytes[0] & 255) == 255 && (bytes[1] & 255) == 216 && (bytes[2] & 255) == 255) {
             type = Icon.IconType.JPEG;
         } else throw new IllegalArgumentException("Image must be PNG or JPEG");
-        var icon = Icon.from(bytes, type);
-        DataObject result = api.edit(guild.getId(), eventId, DataObject.empty().put("image", icon.getEncoding()));
-        return "Updated scheduled event cover (ID: " + eventId + "). Cover: " + coverUrl(result, eventId);
+        return Icon.from(bytes, type);
     }
 
     private String coverUrl(DataObject event, String id) {
@@ -386,31 +439,37 @@ public class ScheduledEventService {
         var details = new HashMap<String, DataObject>();
         String detailsNote = "";
         try {
-            var raw = api.list(guild.getId(), false);
-            for (int i = 0; i < raw.length(); i++) {
-                DataObject item = raw.getObject(i);
-                details.put(item.getString("id"), item);
-            }
+            details.putAll(readEventDetails(guild.getId()));
         } catch (RuntimeException e) {
             details.clear();
             detailsNote = "\nRecurrence and cover details unavailable.";
         }
-        String note = detailsNote;
         return "Retrieved " + events.size() + " scheduled events:\n" +
                 events.stream()
-                        .map(e -> {
-                            StringBuilder sb = new StringBuilder();
-                            sb.append("- **").append(e.getName()).append("** (ID: ").append(e.getId()).append(")\n");
-                            sb.append("  • Type: ").append(e.getType()).append(" | Status: ").append(e.getStatus()).append("\n");
-                            sb.append("  • Start: ").append(e.getStartTime());
-                            if (e.getEndTime() != null) sb.append(" | End: ").append(e.getEndTime());
-                            if (includeUserCount) sb.append("\n  • Interested: ").append(e.getInterestedUserCount()).append(" users");
-                            DataObject extra = details.get(e.getId());
-                            sb.append("\n  • Recurrence: ").append(recurrenceText(extra));
-                            sb.append("\n  • Cover: ").append(coverUrl(extra, e.getId()));
-                            return sb.toString();
-                        })
-                        .collect(Collectors.joining("\n")) + note;
+                        .map(event -> formatListedEvent(event, includeUserCount, details.get(event.getId())))
+                        .collect(Collectors.joining("\n")) + detailsNote;
+    }
+
+    private Map<String, DataObject> readEventDetails(String guildId) {
+        Map<String, DataObject> details = new HashMap<>();
+        var raw = api.list(guildId, false);
+        for (int i = 0; i < raw.length(); i++) {
+            DataObject item = raw.getObject(i);
+            details.put(item.getString("id"), item);
+        }
+        return details;
+    }
+
+    private String formatListedEvent(ScheduledEvent event, boolean includeUserCount, DataObject details) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("- **").append(event.getName()).append("** (ID: ").append(event.getId()).append(")\n");
+        sb.append("  • Type: ").append(event.getType()).append(" | Status: ").append(event.getStatus()).append("\n");
+        sb.append("  • Start: ").append(event.getStartTime());
+        if (event.getEndTime() != null) sb.append(" | End: ").append(event.getEndTime());
+        if (includeUserCount) sb.append("\n  • Interested: ").append(event.getInterestedUserCount()).append(" users");
+        sb.append("\n  • Recurrence: ").append(recurrenceText(details));
+        sb.append("\n  • Cover: ").append(coverUrl(details, event.getId()));
+        return sb.toString();
     }
 
     @Tool(name = "get_guild_scheduled_event_users", description = "Get list of users interested in a scheduled event")
