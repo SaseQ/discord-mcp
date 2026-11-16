@@ -32,7 +32,8 @@ class ScheduledEventServiceTest {
 
     DataObject current() {
         return DataObject.empty().put("scheduled_start_time", "2030-08-05T20:00:00-04:00")
-                .put("scheduled_end_time", "2030-08-05T22:00:00-04:00").putNull("recurrence_rule");
+                .put("scheduled_end_time", "2030-08-05T22:00:00-04:00").putNull("recurrence_rule")
+                .put("status", 1).put("entity_type", 3);
     }
 
     void edit(String start, String end) {
@@ -105,6 +106,9 @@ class ScheduledEventServiceTest {
             assertThat(transport.requests.get(1).method()).isEqualTo("PATCH");
             var body = DataObject.fromJson(transport.bodies.get(1));
             assertThat(body.getInt("status")).isEqualTo(3);
+            assertThat(body.getInt("entity_type")).isEqualTo(3);
+            assertThat(body.hasKey("channel_id")).isTrue();
+            assertThat(body.isNull("channel_id")).isTrue();
             assertThat(body.getString("name")).isEqualTo("renamed");
             assertThat(body.getObject("entity_metadata").getString("location")).isEqualTo("new location");
             assertThat(OffsetDateTime.parse(body.getString("scheduled_end_time")))
@@ -245,6 +249,78 @@ class ScheduledEventServiceTest {
         var create = DataObject.fromJson(tools.get("create_guild_scheduled_event").inputSchema());
         assertThat(create.getObject("properties").keys()).contains("recurrenceRule");
         assertThat(create.getArray("required").toList()).doesNotContain("recurrenceRule");
+    }
+
+    @Test void rawLocationEditPreservesExternalConversionInOnePatch() {
+        when(api.get(GUILD, EVENT)).thenReturn(current().put("entity_type", 2).putNull("scheduled_end_time"));
+        when(api.edit(eq(GUILD), eq(EVENT), any())).thenReturn(DataObject.empty().put("id", EVENT));
+        service.editScheduledEvent(GUILD, EVENT, null, null, null, null, "venue",
+                "2030-08-06T03:00:00Z", "{\"frequency\":2}");
+        var body = org.mockito.ArgumentCaptor.forClass(DataObject.class);
+        verify(api).edit(eq(GUILD), eq(EVENT), body.capture());
+        assertThat(body.getValue().getInt("entity_type")).isEqualTo(3);
+        assertThat(body.getValue().hasKey("channel_id")).isTrue();
+        assertThat(body.getValue().isNull("channel_id")).isTrue();
+        assertThat(body.getValue().getObject("entity_metadata").getString("location")).isEqualTo("venue");
+        assertThat(body.getValue().getString("scheduled_end_time")).isEqualTo("2030-08-06T03:00Z");
+        verify(event, never()).getManager();
+    }
+
+    @Test void rawConversionNeedsAnEndAndScheduledStatus() {
+        when(api.get(GUILD, EVENT)).thenReturn(current().put("entity_type", 2).putNull("scheduled_end_time"));
+        assertThatThrownBy(() -> service.editScheduledEvent(GUILD, EVENT, null, null, null, null,
+                "venue", null, "{\"frequency\":2}")).isInstanceOf(IllegalArgumentException.class);
+        when(api.get(GUILD, EVENT)).thenReturn(current().put("entity_type", 2).put("status", 2));
+        assertThatThrownBy(() -> service.editScheduledEvent(GUILD, EVENT, null, null, null, null,
+                "venue", null, "{\"frequency\":2}")).isInstanceOf(IllegalArgumentException.class);
+        verify(api, never()).edit(any(), any(), any());
+    }
+
+    @Test void activeExternalEventCanUpdateLocationWithExistingEnd() {
+        when(api.get(GUILD, EVENT)).thenReturn(current().put("status", 2));
+        when(api.edit(eq(GUILD), eq(EVENT), any())).thenReturn(DataObject.empty().put("id", EVENT));
+        service.editScheduledEvent(GUILD, EVENT, null, null, null, null, "venue", null, "{\"frequency\":2}");
+        var body = org.mockito.ArgumentCaptor.forClass(DataObject.class);
+        verify(api).edit(eq(GUILD), eq(EVENT), body.capture());
+        assertThat(body.getValue().getString("scheduled_end_time")).isEqualTo("2030-08-05T22:00-04:00");
+    }
+
+    @Test void rawEditsPreserveNameDescriptionAndLocationValidation() {
+        when(api.get(GUILD, EVENT)).thenReturn(current());
+        for (String bad : java.util.List.of(" ", "x".repeat(101))) {
+            assertThatThrownBy(() -> service.editScheduledEvent(GUILD, EVENT, null, bad, null, null,
+                    null, null, "{\"frequency\":2}")).isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> service.editScheduledEvent(GUILD, EVENT, null, null, null, null,
+                    bad, null, "{\"frequency\":2}")).isInstanceOf(IllegalArgumentException.class);
+        }
+        assertThatThrownBy(() -> service.editScheduledEvent(GUILD, EVENT, null, null, "x".repeat(1001),
+                null, null, null, "{\"frequency\":2}")).isInstanceOf(IllegalArgumentException.class);
+        verify(api, never()).edit(any(), any(), any());
+    }
+
+    @Test void rawStartAndEndKeepJdaTimeRestrictions() {
+        when(api.get(GUILD, EVENT)).thenReturn(current());
+        for (String invalid : java.util.List.of(OffsetDateTime.now().minusDays(1).toString(),
+                OffsetDateTime.now().plusYears(6).toString())) {
+            assertThatThrownBy(() -> service.editScheduledEvent(GUILD, EVENT, null, null, null,
+                    invalid, null, null, "{\"frequency\":2}")).isInstanceOf(IllegalArgumentException.class);
+        }
+        assertThatThrownBy(() -> service.editScheduledEvent(GUILD, EVENT, null, null, null,
+                null, null, OffsetDateTime.now().plusYears(6).toString(), "{\"frequency\":2}"))
+                .isInstanceOf(IllegalArgumentException.class);
+        when(api.get(GUILD, EVENT)).thenReturn(current().put("status", 2));
+        assertThatThrownBy(() -> service.editScheduledEvent(GUILD, EVENT, null, null, null,
+                "2030-08-08T20:00:00Z", null, null, "{\"frequency\":2}"))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(api, never()).edit(any(), any(), any());
+    }
+
+    @Test void unreadableSavedRuleRefusesRescheduleWithoutPatch() {
+        when(api.get(GUILD, EVENT)).thenReturn(current().put("recurrence_rule",
+                DataObject.fromJson("{\"frequency\":2,\"start\":\"invalid\",\"by_weekday\":\"invalid\"}").toMap()));
+        assertThatThrownBy(() -> edit("2030-08-08T20:00:00Z", null)).isInstanceOf(IllegalArgumentException.class);
+        verify(api, never()).edit(any(), any(), any());
+        verify(event, never()).getManager();
     }
 
 }

@@ -55,4 +55,15 @@ class RecurrenceRuleTest {
         assertThatThrownBy(() -> RecurrenceRule.move(existing, "2030-08-11T20:00:00Z"))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "{\"frequency\":2,\"start\":\"invalid\",\"by_weekday\":[1]}",
+            "{\"frequency\":2,\"start\":\"2030-08-06T02:00:00Z\",\"by_weekday\":\"invalid\"}",
+            "{\"frequency\":1,\"start\":\"2030-08-06T02:00:00Z\",\"by_n_weekday\":[{\"n\":99,\"day\":1}]}"
+    })
+    void refusesToRepairMalformedSavedRules(String saved) {
+        assertThatThrownBy(() -> RecurrenceRule.move(DataObject.fromJson(saved), "2030-08-08T20:00:00Z"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
 }

@@ -86,6 +86,7 @@ final class RecurrenceRule {
             if (WRITABLE.contains(key)) rule.put(key, saved.toMap().get(key));
             else if (!READ_ONLY.contains(key)) throw new IllegalArgumentException("Unreadable recurrence field: " + key);
         }
+        rule = parse(rule.toString(), rule.getString("start", null));
         int frequency = integer(rule.toMap().get("frequency"), "frequency", 0, 3);
         rule.put("start", start);
         if (frequency == 2) rule.remove("by_weekday");
