@@ -8,9 +8,12 @@ import net.dv8tion.jda.api.entities.channel.middleman.GuildChannel;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
+import net.dv8tion.jda.api.utils.data.DataObject;
 import org.springframework.stereotype.Service;
 
 import java.time.OffsetDateTime;
+import java.time.Duration;
 import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -19,12 +22,19 @@ import java.util.stream.Collectors;
 public class ScheduledEventService {
 
     private final JDA jda;
+    private final ScheduledEventApi api;
 
     @Value("${DISCORD_GUILD_ID:}")
     private String defaultGuildId;
 
+    @Autowired
     public ScheduledEventService(JDA jda) {
+        this(jda, new ScheduledEventApi(jda));
+    }
+
+    ScheduledEventService(JDA jda, ScheduledEventApi api) {
         this.jda = jda;
+        this.api = api;
     }
 
     private String resolveGuildId(String guildId) {
@@ -62,6 +72,30 @@ public class ScheduledEventService {
             return OffsetDateTime.parse(time);
         } catch (DateTimeParseException e) {
             throw new IllegalArgumentException("Invalid ISO8601 timestamp: " + time);
+        }
+    }
+
+    private static boolean provided(String value) {
+        return value != null && !value.isEmpty();
+    }
+
+    private OffsetDateTime resolveEndTime(DataObject current, String start, String end) {
+        try {
+            OffsetDateTime oldStart = parseTime(current.getString("scheduled_start_time"));
+            OffsetDateTime effectiveStart = provided(start) ? parseTime(start) : oldStart;
+            if (provided(end)) {
+                OffsetDateTime result = parseTime(end);
+                if (!result.isAfter(effectiveStart)) throw new IllegalArgumentException("End must be after start");
+                return result;
+            }
+            if (!provided(start)) return null;
+            if (!current.hasKey("scheduled_end_time")) throw new IllegalArgumentException("Current end time unavailable");
+            if (current.isNull("scheduled_end_time")) return null;
+            Duration duration = Duration.between(oldStart, parseTime(current.getString("scheduled_end_time")));
+            if (duration.isZero() || duration.isNegative()) throw new IllegalArgumentException("Current duration must be positive");
+            return effectiveStart.plus(duration);
+        } catch (net.dv8tion.jda.api.exceptions.ParsingException e) {
+            throw new IllegalArgumentException("Current event times unavailable", e);
         }
     }
 
@@ -139,12 +173,22 @@ public class ScheduledEventService {
             @ToolParam(description = "New name", required = false) String name,
             @ToolParam(description = "New description", required = false) String description,
             @ToolParam(description = "New ISO8601 start time", required = false) String scheduledStartTime,
-            @ToolParam(description = "New location (for External events)", required = false) String location) {
+            @ToolParam(description = "New location (for External events)", required = false) String location,
+            @ToolParam(description = "New ISO8601 end time; omit when moving the start to keep the duration", required = false) String scheduledEndTime) {
 
         Guild guild = getGuild(guildId);
         ScheduledEvent event = getEvent(guild, eventId);
 
+        OffsetDateTime newEnd = null;
+        if (provided(scheduledStartTime) || provided(scheduledEndTime)) {
+            DataObject current = api.get(guild.getId(), eventId);
+            if (provided(scheduledStartTime) && (!current.hasKey("recurrence_rule") || !current.isNull("recurrence_rule"))) {
+                throw new IllegalArgumentException("Cannot move this event without a readable recurrence rule");
+            }
+            newEnd = resolveEndTime(current, scheduledStartTime, scheduledEndTime);
+        }
         var manager = event.getManager();
+        if (newEnd != null) manager.setEndTime(newEnd);
         if (name != null && !name.isEmpty()) manager.setName(name);
         if (description != null && !description.isEmpty()) manager.setDescription(description);
         if (scheduledStartTime != null && !scheduledStartTime.isEmpty()) manager.setStartTime(parseTime(scheduledStartTime));
