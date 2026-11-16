@@ -244,39 +244,14 @@ public class ScheduledEventService {
         }
         if (changesRecurrence) {
             // Raw writes bypass the manager, so retain its validation and location conversion.
-            if (provided(name) && (name.isBlank() || name.length() > 100)) {
-                throw new IllegalArgumentException("name must be nonblank and at most 100 characters");
-            }
-            if (provided(description) && description.length() > 1000) {
-                throw new IllegalArgumentException("description must be at most 1000 characters");
-            }
-            if (provided(location) && (location.isBlank() || location.length() > 100)) {
-                throw new IllegalArgumentException("location must be nonblank and at most 100 characters");
-            }
-            OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
-            if (newStart != null && (current.getInt("status", 0) != 1
-                    || !newStart.isAfter(now) || !newStart.isBefore(now.plusYears(5)))) {
-                throw new IllegalArgumentException("Only scheduled events can move to a future start within five years");
-            }
-            if (newEnd != null && !newEnd.isBefore(now.plusYears(5))) {
-                throw new IllegalArgumentException("End must be within five years");
-            }
+            validateRecurrenceEditText(name, description, location);
+            validateRecurrenceEditTimes(current, newStart, newEnd);
             DataObject body = DataObject.empty();
             if (rule == null) body.putNull("recurrence_rule"); else body.put("recurrence_rule", rule.toMap());
             if (provided(name)) body.put("name", name);
             if (provided(description)) body.put("description", description);
             if (provided(location)) {
-                int type = current.getInt("entity_type", 0);
-                if (type < 1 || type > 3 || (type != 3 && current.getInt("status", 0) != 1)) {
-                    throw new IllegalArgumentException("Only scheduled events can convert to external events");
-                }
-                String end = newEnd == null ? current.getString("scheduled_end_time", null) : newEnd.toString();
-                if (!provided(end)) throw new IllegalArgumentException("External events require an end time");
-                OffsetDateTime convertedEnd = parseTime(end);
-                OffsetDateTime convertedStart = newStart == null ? parseTime(current.getString("scheduled_start_time")) : newStart;
-                if (!convertedEnd.isAfter(convertedStart)) throw new IllegalArgumentException("End must be after start");
-                body.put("entity_metadata", Map.of("location", location)).put("entity_type", 3)
-                        .putNull("channel_id").put("scheduled_end_time", convertedEnd.toString());
+                applyExternalLocationChange(body, current, location, newStart, newEnd);
             }
             if (newStatus != null) body.put("status", newStatus);
             if (newStart != null) body.put("scheduled_start_time", newStart.toString());
@@ -301,6 +276,44 @@ public class ScheduledEventService {
 
         manager.complete();
         return "Successfully updated scheduled event: " + event.getName() + " (ID: " + event.getId() + ")";
+    }
+
+    private static void validateRecurrenceEditText(String name, String description, String location) {
+        if (provided(name) && (name.isBlank() || name.length() > 100)) {
+            throw new IllegalArgumentException("name must be nonblank and at most 100 characters");
+        }
+        if (provided(description) && description.length() > 1000) {
+            throw new IllegalArgumentException("description must be at most 1000 characters");
+        }
+        if (provided(location) && (location.isBlank() || location.length() > 100)) {
+            throw new IllegalArgumentException("location must be nonblank and at most 100 characters");
+        }
+    }
+
+    private static void validateRecurrenceEditTimes(DataObject current, OffsetDateTime newStart, OffsetDateTime newEnd) {
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        if (newStart != null && (current.getInt("status", 0) != 1
+                || !newStart.isAfter(now) || !newStart.isBefore(now.plusYears(5)))) {
+            throw new IllegalArgumentException("Only scheduled events can move to a future start within five years");
+        }
+        if (newEnd != null && !newEnd.isBefore(now.plusYears(5))) {
+            throw new IllegalArgumentException("End must be within five years");
+        }
+    }
+
+    private void applyExternalLocationChange(DataObject body, DataObject current, String location,
+                                            OffsetDateTime newStart, OffsetDateTime newEnd) {
+        int type = current.getInt("entity_type", 0);
+        if (type < 1 || type > 3 || (type != 3 && current.getInt("status", 0) != 1)) {
+            throw new IllegalArgumentException("Only scheduled events can convert to external events");
+        }
+        String end = newEnd == null ? current.getString("scheduled_end_time", null) : newEnd.toString();
+        if (!provided(end)) throw new IllegalArgumentException("External events require an end time");
+        OffsetDateTime convertedEnd = parseTime(end);
+        OffsetDateTime convertedStart = newStart == null ? parseTime(current.getString("scheduled_start_time")) : newStart;
+        if (!convertedEnd.isAfter(convertedStart)) throw new IllegalArgumentException("End must be after start");
+        body.put("entity_metadata", Map.of("location", location)).put("entity_type", 3)
+                .putNull("channel_id").put("scheduled_end_time", convertedEnd.toString());
     }
 
     @Tool(name = "set_guild_scheduled_event_image", description = "Set an event cover from a direct HTTPS PNG/JPEG URL (maximum 5 MiB)")
