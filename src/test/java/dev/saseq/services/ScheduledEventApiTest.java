@@ -50,6 +50,7 @@ class DiscordTransport implements AutoCloseable {
     final List<String> bodies = new ArrayList<>();
     final Deque<String> replies = new ArrayDeque<>();
     int status = 200;
+    int patchStatus = 200;
 
     DiscordTransport() {
         jda = spy(new JDAImpl(new AuthorizationConfig("synthetic-test-token")));
@@ -60,8 +61,9 @@ class DiscordTransport implements AutoCloseable {
             if (request.body() != null) request.body().writeTo(buffer);
             bodies.add(buffer.readUtf8());
             String body = replies.isEmpty() ? "{}" : replies.removeFirst();
-            return new Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(status)
-                    .message(status == 200 ? "OK" : "Forbidden")
+            int code = request.method().equals("PATCH") ? patchStatus : status;
+            return new Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(code)
+                    .message(code == 200 ? "OK" : "Forbidden")
                     .body(ResponseBody.create(body, MediaType.get("application/json"))).build();
         }).build();
         doReturn(http).when(jda).getHttpClient();

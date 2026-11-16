@@ -99,6 +99,19 @@ public class ScheduledEventService {
         }
     }
 
+    private String formatSavedEvent(DataObject event) {
+        try {
+            return "**" + event.getString("name", "unavailable") + "** (ID: " + event.getString("id", "unavailable")
+                    + ")\n  • Start: " + event.getString("scheduled_start_time", "unavailable")
+                    + "\n  • End: " + (event.hasKey("scheduled_end_time")
+                    ? event.getString("scheduled_end_time", "none") : "unavailable")
+                    + "\n  • Recurrence: " + (event.hasKey("recurrence_rule")
+                    ? (event.isNull("recurrence_rule") ? "none" : event.getObject("recurrence_rule").toString()) : "unavailable");
+        } catch (RuntimeException e) {
+            return "Discord accepted the change; response details unavailable. Check the event list.";
+        }
+    }
+
     private String formatEvent(ScheduledEvent event) {
         StringBuilder sb = new StringBuilder();
         sb.append("**").append(event.getName()).append("** (ID: ").append(event.getId()).append(")\n");
@@ -129,7 +142,8 @@ public class ScheduledEventService {
             @ToolParam(description = "ISO8601 timestamp for when the event ends (Required for External events)", required = false) String scheduledEndTime,
             @ToolParam(description = "Type of event: 1=Stage Instance, 2=Voice, 3=External") String entityType,
             @ToolParam(description = "Channel ID (Required for types 1 and 2)", required = false) String channelId,
-            @ToolParam(description = "Location or link (Required for type 3 - External)", required = false) String location) {
+            @ToolParam(description = "Location or link (Required for type 3 - External)", required = false) String location,
+            @ToolParam(description = "Recurrence JSON: frequency 0 yearly, 1 monthly, 2 weekly, 3 daily; omitted means one-off", required = false) String recurrenceRule) {
 
         Guild guild = getGuild(guildId);
         if (name == null || name.isEmpty()) throw new IllegalArgumentException("name cannot be null");
@@ -161,6 +175,23 @@ public class ScheduledEventService {
             action.setEndTime(parseTime(scheduledEndTime));
         }
 
+        if (provided(recurrenceRule)) {
+            DataObject rule = RecurrenceRule.parse(recurrenceRule, scheduledStartTime);
+            if (rule != null) {
+                DataObject body = DataObject.empty().put("name", name).put("privacy_level", 2)
+                        .put("entity_type", type).put("scheduled_start_time", startTime.toString())
+                        .put("recurrence_rule", rule.toMap());
+                if (provided(description)) body.put("description", description);
+                if (provided(scheduledEndTime)) {
+                    OffsetDateTime end = parseTime(scheduledEndTime);
+                    if (!end.isAfter(startTime)) throw new IllegalArgumentException("End must be after start");
+                    body.put("scheduled_end_time", end.toString());
+                }
+                if (type == 3) body.put("entity_metadata", java.util.Map.of("location", location));
+                else body.put("channel_id", channelId);
+                return "Created scheduled event:\n" + formatSavedEvent(api.create(guild.getId(), body));
+            }
+        }
         ScheduledEvent event = action.complete();
         return "Created scheduled event:\n" + formatEvent(event);
     }
@@ -174,18 +205,47 @@ public class ScheduledEventService {
             @ToolParam(description = "New description", required = false) String description,
             @ToolParam(description = "New ISO8601 start time", required = false) String scheduledStartTime,
             @ToolParam(description = "New location (for External events)", required = false) String location,
-            @ToolParam(description = "New ISO8601 end time; omit when moving the start to keep the duration", required = false) String scheduledEndTime) {
+            @ToolParam(description = "New ISO8601 end time; omit when moving the start to keep the duration", required = false) String scheduledEndTime,
+            @ToolParam(description = "Recurrence JSON; omit to keep, or use the string null to clear", required = false) String recurrenceRule) {
 
         Guild guild = getGuild(guildId);
         ScheduledEvent event = getEvent(guild, eventId);
 
+        OffsetDateTime newStart = provided(scheduledStartTime) ? parseTime(scheduledStartTime) : null;
+        Integer newStatus = provided(status) ? Integer.parseInt(status) : null;
+        if (newStatus != null && (newStatus < 1 || newStatus > 4)) {
+            throw new IllegalArgumentException("status must be 1 (Scheduled), 2 (Active), 3 (Completed), or 4 (Canceled)");
+        }
+        DataObject current = null;
         OffsetDateTime newEnd = null;
-        if (provided(scheduledStartTime) || provided(scheduledEndTime)) {
-            DataObject current = api.get(guild.getId(), eventId);
-            if (provided(scheduledStartTime) && (!current.hasKey("recurrence_rule") || !current.isNull("recurrence_rule"))) {
-                throw new IllegalArgumentException("Cannot move this event without a readable recurrence rule");
+        if (newStart != null || provided(scheduledEndTime) || provided(recurrenceRule)) {
+            current = api.get(guild.getId(), eventId);
+            if (newStart != null || provided(scheduledEndTime)) newEnd = resolveEndTime(current, scheduledStartTime, scheduledEndTime);
+        }
+        boolean changesRecurrence = provided(recurrenceRule);
+        DataObject rule = null;
+        if (changesRecurrence) {
+            String anchor = recurrenceRule.trim().equals("null") ? null
+                    : (newStart == null ? current.getString("scheduled_start_time") : scheduledStartTime);
+            rule = RecurrenceRule.parse(recurrenceRule, anchor);
+        } else if (newStart != null) {
+            if (!current.hasKey("recurrence_rule")) throw new IllegalArgumentException("Current recurrence unavailable");
+            if (!current.isNull("recurrence_rule")) {
+                try { rule = RecurrenceRule.move(current.getObject("recurrence_rule"), scheduledStartTime); }
+                catch (RuntimeException e) { throw new IllegalArgumentException("Cannot safely move the current recurrence", e); }
+                changesRecurrence = true;
             }
-            newEnd = resolveEndTime(current, scheduledStartTime, scheduledEndTime);
+        }
+        if (changesRecurrence) {
+            DataObject body = DataObject.empty();
+            if (rule == null) body.putNull("recurrence_rule"); else body.put("recurrence_rule", rule.toMap());
+            if (provided(name)) body.put("name", name);
+            if (provided(description)) body.put("description", description);
+            if (provided(location)) body.put("entity_metadata", java.util.Map.of("location", location));
+            if (newStatus != null) body.put("status", newStatus);
+            if (newStart != null) body.put("scheduled_start_time", newStart.toString());
+            if (newEnd != null) body.put("scheduled_end_time", newEnd.toString());
+            return "Successfully updated scheduled event:\n" + formatSavedEvent(api.edit(guild.getId(), eventId, body));
         }
         var manager = event.getManager();
         if (newEnd != null) manager.setEndTime(newEnd);
