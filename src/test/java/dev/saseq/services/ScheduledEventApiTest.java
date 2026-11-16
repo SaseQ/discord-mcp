@@ -15,6 +15,7 @@ import java.util.Deque;
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
+@org.junit.jupiter.api.Timeout(10)
 class ScheduledEventApiTest {
     @Test
     void getUsesJdaAuthenticationAndHandlesProviderErrors() {
@@ -28,6 +29,36 @@ class ScheduledEventApiTest {
             transport.status = 403;
             transport.replies.add("{\"code\":50013,\"message\":\"Missing Permissions\"}");
             assertThatThrownBy(() -> api.get("123", "234")).isInstanceOf(ErrorResponseException.class);
+        }
+    }
+
+    @Test
+    void acceptedWriteWithUnreadableBodyDoesNotBecomeARejectedWrite() {
+        try (var transport = new DiscordTransport()) {
+            transport.replies.add("not-json");
+            assertThat(new ScheduledEventApi(transport.jda).edit("123", "234", DataObject.empty()).keys()).isEmpty();
+            assertThat(transport.requests).hasSize(1);
+        }
+    }
+
+    @Test
+    void transportFailureReportsUnknownOutcome() {
+        try (var transport = new DiscordTransport()) {
+            transport.failWrites = true;
+            assertThatThrownBy(() -> new ScheduledEventApi(transport.jda).edit("123", "234", DataObject.empty()))
+                    .isInstanceOf(IllegalStateException.class).hasMessageContaining("outcome is unknown");
+        }
+    }
+
+    @Test
+    void unreadableGetAndListFailWithoutHangingTheRequester() {
+        try (var transport = new DiscordTransport()) {
+            var api = new ScheduledEventApi(transport.jda);
+            transport.replies.add("not-json");
+            assertThatThrownBy(() -> api.get("123", "234")).hasMessage("Event response unavailable");
+            transport.replies.add("not-json");
+            assertThatThrownBy(() -> api.list("123", false)).hasMessage("Event list response unavailable");
+            assertThat(transport.requests.get(1).url().queryParameter("with_user_count")).isEqualTo("false");
         }
     }
 
@@ -51,6 +82,7 @@ class DiscordTransport implements AutoCloseable {
     final Deque<String> replies = new ArrayDeque<>();
     int status = 200;
     int patchStatus = 200;
+    boolean failWrites;
 
     DiscordTransport() {
         jda = spy(new JDAImpl(new AuthorizationConfig("synthetic-test-token")));
@@ -60,6 +92,7 @@ class DiscordTransport implements AutoCloseable {
             okio.Buffer buffer = new okio.Buffer();
             if (request.body() != null) request.body().writeTo(buffer);
             bodies.add(buffer.readUtf8());
+            if (failWrites && !request.method().equals("GET")) throw new java.io.IOException("synthetic connection failure");
             String body = replies.isEmpty() ? "{}" : replies.removeFirst();
             int code = request.method().equals("PATCH") ? patchStatus : status;
             return new Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(code)

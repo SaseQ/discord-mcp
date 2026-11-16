@@ -164,4 +164,87 @@ class ScheduledEventServiceTest {
         verify(event, never()).getManager();
     }
 
+    @Test void coverChecksTargetBeforeFetchAndRejectsTerminalEvents() {
+        try (var fetch = mockStatic(RemoteFetchGuard.class)) {
+            when(api.get(GUILD, EVENT)).thenThrow(new IllegalArgumentException("not found"));
+            assertThatThrownBy(() -> service.setScheduledEventImage(GUILD, EVENT, "https://media.example/a"))
+                    .hasMessage("not found");
+            doReturn(current().put("id", EVENT).put("status", 3)).when(api).get(GUILD, EVENT);
+            assertThatThrownBy(() -> service.setScheduledEventImage(GUILD, EVENT, "https://media.example/a"))
+                    .isInstanceOf(IllegalArgumentException.class);
+            fetch.verifyNoInteractions();
+        }
+    }
+
+    @Test void coverUsesBoundedHttpsFetchAndOneImagePatch() {
+        try (var transport = new DiscordTransport(); var fetch = mockStatic(RemoteFetchGuard.class)) {
+            transport.replies.add(current().put("id", EVENT).put("status", 1).toString());
+            transport.replies.add("{\"image\":\"abc123\"}");
+            byte[] png = {(byte)137,80,78,71,13,10,26,10};
+            fetch.when(() -> RemoteFetchGuard.fetch("https://media.example/a", 5 * 1024 * 1024, "image"))
+                    .thenReturn(png);
+            var target = new ScheduledEventService(jda, new ScheduledEventApi(transport.jda));
+            assertThat(target.setScheduledEventImage(GUILD, EVENT, "https://media.example/a"))
+                    .contains("https://cdn.discordapp.com/guild-events/234/abc123.png");
+            assertThat(transport.requests).hasSize(2);
+            assertThat(transport.requests.get(1).method()).isEqualTo("PATCH");
+            var body = DataObject.fromJson(transport.bodies.get(1));
+            assertThat(body.keys()).containsExactly("image");
+            assertThat(body.getString("image")).startsWith("data:image/png;base64,");
+            fetch.verify(() -> RemoteFetchGuard.fetch("https://media.example/a", 5 * 1024 * 1024, "image"));
+        }
+    }
+
+    @Test void rejectsUnsupportedImagesAndUnavailableUrlIsNotAFailedWrite() {
+        when(api.get(GUILD, EVENT)).thenReturn(current().put("id", EVENT).put("status", 1));
+        when(api.edit(eq(GUILD), eq(EVENT), any())).thenReturn(DataObject.empty());
+        try (var fetch = mockStatic(RemoteFetchGuard.class)) {
+            assertThatThrownBy(() -> service.setScheduledEventImage(GUILD, EVENT, "http://media.example/a"))
+                    .isInstanceOf(IllegalArgumentException.class);
+            fetch.when(() -> RemoteFetchGuard.fetch("https://media.example/a", 5 * 1024 * 1024, "image"))
+                    .thenReturn("GIF89a".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            assertThatThrownBy(() -> service.setScheduledEventImage(GUILD, EVENT, "https://media.example/a"))
+                    .isInstanceOf(IllegalArgumentException.class);
+            verify(api, never()).edit(any(), any(), any());
+            fetch.when(() -> RemoteFetchGuard.fetch("https://media.example/a", 5 * 1024 * 1024, "image"))
+                    .thenReturn(new byte[]{(byte)255,(byte)216,(byte)255});
+            assertThat(service.setScheduledEventImage(GUILD, EVENT, "https://media.example/a"))
+                    .contains("Updated", "234", "unavailable");
+            verify(api).edit(eq(GUILD), eq(EVENT), any());
+        }
+    }
+
+    @Test void listingEnrichesExistingOutputAndSurvivesExtraReadFailure() {
+        when(guild.getScheduledEvents()).thenReturn(java.util.List.of(event));
+        when(event.getInterestedUserCount()).thenReturn(7);
+        when(api.list(GUILD, false)).thenReturn(net.dv8tion.jda.api.utils.data.DataArray.fromCollection(
+                java.util.List.of(java.util.Map.of("id", EVENT, "image", "abc123", "recurrence_rule", java.util.Map.of("frequency", 2)))));
+        assertThat(service.listScheduledEvents(GUILD, null))
+                .contains("Event", "7 users", "Recurrence:", "frequency", "abc123.png");
+        when(api.list(GUILD, false)).thenThrow(new IllegalStateException("offline"));
+        assertThat(service.listScheduledEvents(GUILD, "false"))
+                .contains("Event", "details unavailable").doesNotContain("Interested:");
+        doReturn(net.dv8tion.jda.api.utils.data.DataArray.fromJson(
+                "[{\"id\":\"234\",\"image\":null,\"recurrence_rule\":null}]")).when(api).list(GUILD, false);
+        assertThat(service.listScheduledEvents(GUILD, null)).contains("Cover: none", "Recurrence: none");
+        when(api.list(GUILD, false)).thenReturn(net.dv8tion.jda.api.utils.data.DataArray.fromJson("[{\"id\":\"234\"}]"));
+        assertThat(service.listScheduledEvents(GUILD, null)).contains("Cover: unavailable", "Recurrence: unavailable");
+    }
+
+    @Test void discoversChangedOptionalArgumentsAndRequiredCoverArguments() {
+        var callbacks = org.springframework.ai.tool.method.MethodToolCallbackProvider.builder()
+                .toolObjects(service).build().getToolCallbacks();
+        var tools = java.util.Arrays.stream(callbacks).collect(java.util.stream.Collectors.toMap(
+                callback -> callback.getToolDefinition().name(), callback -> callback.getToolDefinition()));
+        var cover = DataObject.fromJson(tools.get("set_guild_scheduled_event_image").inputSchema());
+        assertThat(cover.getObject("properties").keys()).containsExactlyInAnyOrder("guildId", "eventId", "imageUrl");
+        assertThat(cover.getArray("required").toList()).containsExactlyInAnyOrder("eventId", "imageUrl");
+        var edit = DataObject.fromJson(tools.get("edit_guild_scheduled_event").inputSchema());
+        assertThat(edit.getObject("properties").keys()).contains("scheduledEndTime", "recurrenceRule");
+        assertThat(edit.getArray("required").toList()).doesNotContain("scheduledEndTime", "recurrenceRule");
+        var create = DataObject.fromJson(tools.get("create_guild_scheduled_event").inputSchema());
+        assertThat(create.getObject("properties").keys()).contains("recurrenceRule");
+        assertThat(create.getArray("required").toList()).doesNotContain("recurrenceRule");
+    }
+
 }

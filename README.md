@@ -383,10 +383,11 @@ Remote MCP Connector:
 - [`modify_voice_state`](): Server mute or deafen a member in voice channels
 
 #### Scheduled Events Management
-- [`create_guild_scheduled_event`](): Schedule a new event on the server (voice, stage, or external)
-- [`edit_guild_scheduled_event`](): Modify event details or change its status (start, complete, cancel)
+- [`create_guild_scheduled_event`](): Schedule a one-off or recurring event (voice, stage, or external)
+- [`edit_guild_scheduled_event`](): Edit event details, times, recurrence or status; start-time moves preserve duration
+- [`set_guild_scheduled_event_image`](): Set an event cover from a direct HTTPS PNG/JPEG URL (up to 5 MiB)
 - [`delete_guild_scheduled_event`](): Permanently delete a scheduled event
-- [`list_guild_scheduled_events`](): List all active and scheduled events on the server
+- [`list_guild_scheduled_events`](): List active and scheduled events, including recurrence and cover URLs
 - [`get_guild_scheduled_event_users`](): Get list of users interested in a scheduled event
 
 #### Channel Permission Overwrites

@@ -23,6 +23,7 @@ final class RecurrenceRule {
                 if (!WRITABLE.contains(key)) throw new IllegalArgumentException("Unsupported recurrence field: " + key);
             }
             int frequency = integer(rule.toMap().get("frequency"), "frequency", 0, 3);
+            rule.put("frequency", frequency);
             int interval = rule.hasKey("interval") ? integer(rule.toMap().get("interval"), "interval", 1, 2) : 1;
             if (interval != 1 && frequency != 2) throw new IllegalArgumentException("Only weekly rules support interval 2");
             rule.put("interval", interval);

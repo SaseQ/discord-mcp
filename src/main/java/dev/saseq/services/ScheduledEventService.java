@@ -267,6 +267,48 @@ public class ScheduledEventService {
         return "Successfully updated scheduled event: " + event.getName() + " (ID: " + event.getId() + ")";
     }
 
+    @Tool(name = "set_guild_scheduled_event_image", description = "Set an event cover from a direct HTTPS PNG/JPEG URL (maximum 5 MiB)")
+    public String setScheduledEventImage(
+            @ToolParam(description = "Discord server ID", required = false) String guildId,
+            @ToolParam(description = "ID of the scheduled event") String eventId,
+            @ToolParam(description = "Direct HTTPS PNG or JPEG image URL") String imageUrl) {
+        var url = imageUrl == null ? null : okhttp3.HttpUrl.parse(imageUrl);
+        if (url == null || !url.isHttps()) throw new IllegalArgumentException("imageUrl must use HTTPS");
+        Guild guild = getGuild(guildId);
+        DataObject current = api.get(guild.getId(), eventId);
+        if (!eventId.equals(current.getString("id", null))) throw new IllegalArgumentException("Event response unavailable");
+        int status = current.getInt("status");
+        if (status != 1 && status != 2) throw new IllegalArgumentException("Event is not editable");
+        byte[] bytes = RemoteFetchGuard.fetch(imageUrl, 5 * 1024 * 1024, "image");
+        net.dv8tion.jda.api.entities.Icon.IconType type;
+        byte[] png = {(byte)137,80,78,71,13,10,26,10};
+        if (bytes.length >= 8 && java.util.Arrays.equals(java.util.Arrays.copyOf(bytes, 8), png)) {
+            type = net.dv8tion.jda.api.entities.Icon.IconType.PNG;
+        } else if (bytes.length >= 3 && (bytes[0] & 255) == 255 && (bytes[1] & 255) == 216 && (bytes[2] & 255) == 255) {
+            type = net.dv8tion.jda.api.entities.Icon.IconType.JPEG;
+        } else throw new IllegalArgumentException("Image must be PNG or JPEG");
+        var icon = net.dv8tion.jda.api.entities.Icon.from(bytes, type);
+        DataObject result = api.edit(guild.getId(), eventId, DataObject.empty().put("image", icon.getEncoding()));
+        return "Updated scheduled event cover (ID: " + eventId + "). Cover: " + coverUrl(result, eventId);
+    }
+
+    private String coverUrl(DataObject event, String id) {
+        if (event == null || !event.hasKey("image")) return "unavailable";
+        if (event.isNull("image")) return "none";
+        try {
+            String hash = event.getString("image");
+            if (!hash.matches("[A-Za-z0-9_]+")) return "unavailable";
+            return "https://cdn.discordapp.com/guild-events/" + id + "/" + hash + ".png";
+        } catch (RuntimeException e) { return "unavailable"; }
+    }
+
+    private String recurrenceText(DataObject event) {
+        if (event == null || !event.hasKey("recurrence_rule")) return "unavailable";
+        if (event.isNull("recurrence_rule")) return "none";
+        try { return event.getObject("recurrence_rule").toString(); }
+        catch (RuntimeException e) { return "unavailable"; }
+    }
+
     @Tool(name = "delete_guild_scheduled_event", description = "Permanently delete a scheduled event")
     public String deleteScheduledEvent(
             @ToolParam(description = "Discord server ID", required = false) String guildId,
@@ -292,7 +334,19 @@ public class ScheduledEventService {
         }
 
         boolean includeUserCount = withUserCount == null || withUserCount.isEmpty() || Boolean.parseBoolean(withUserCount);
-
+        var details = new java.util.HashMap<String, DataObject>();
+        String detailsNote = "";
+        try {
+            var raw = api.list(guild.getId(), false);
+            for (int i = 0; i < raw.length(); i++) {
+                DataObject item = raw.getObject(i);
+                details.put(item.getString("id"), item);
+            }
+        } catch (RuntimeException e) {
+            details.clear();
+            detailsNote = "\nRecurrence and cover details unavailable.";
+        }
+        String note = detailsNote;
         return "Retrieved " + events.size() + " scheduled events:\n" +
                 events.stream()
                         .map(e -> {
@@ -302,9 +356,12 @@ public class ScheduledEventService {
                             sb.append("  • Start: ").append(e.getStartTime());
                             if (e.getEndTime() != null) sb.append(" | End: ").append(e.getEndTime());
                             if (includeUserCount) sb.append("\n  • Interested: ").append(e.getInterestedUserCount()).append(" users");
+                            DataObject extra = details.get(e.getId());
+                            sb.append("\n  • Recurrence: ").append(recurrenceText(extra));
+                            sb.append("\n  • Cover: ").append(coverUrl(extra, e.getId()));
                             return sb.toString();
                         })
-                        .collect(Collectors.joining("\n"));
+                        .collect(Collectors.joining("\n")) + note;
     }
 
     @Tool(name = "get_guild_scheduled_event_users", description = "Get list of users interested in a scheduled event")
