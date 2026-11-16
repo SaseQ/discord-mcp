@@ -2,20 +2,27 @@ package dev.saseq.services;
 
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.entities.Guild;
+import net.dv8tion.jda.api.entities.Icon;
 import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.entities.ScheduledEvent;
 import net.dv8tion.jda.api.entities.channel.middleman.GuildChannel;
+import net.dv8tion.jda.api.exceptions.ParsingException;
+import net.dv8tion.jda.api.utils.data.DataObject;
+import okhttp3.HttpUrl;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.annotation.Autowired;
-import net.dv8tion.jda.api.utils.data.DataObject;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.time.OffsetDateTime;
 import java.time.Duration;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeParseException;
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @Service
@@ -94,7 +101,7 @@ public class ScheduledEventService {
             Duration duration = Duration.between(oldStart, parseTime(current.getString("scheduled_end_time")));
             if (duration.isZero() || duration.isNegative()) throw new IllegalArgumentException("Current duration must be positive");
             return effectiveStart.plus(duration);
-        } catch (net.dv8tion.jda.api.exceptions.ParsingException e) {
+        } catch (ParsingException e) {
             throw new IllegalArgumentException("Current event times unavailable", e);
         }
     }
@@ -105,8 +112,7 @@ public class ScheduledEventService {
                     + ")\n  • Start: " + event.getString("scheduled_start_time", "unavailable")
                     + "\n  • End: " + (event.hasKey("scheduled_end_time")
                     ? event.getString("scheduled_end_time", "none") : "unavailable")
-                    + "\n  • Recurrence: " + (event.hasKey("recurrence_rule")
-                    ? (event.isNull("recurrence_rule") ? "none" : event.getObject("recurrence_rule").toString()) : "unavailable");
+                    + "\n  • Recurrence: " + recurrenceText(event);
         } catch (RuntimeException e) {
             return "Discord accepted the change; response details unavailable. Check the event list.";
         }
@@ -187,7 +193,7 @@ public class ScheduledEventService {
                     if (!end.isAfter(startTime)) throw new IllegalArgumentException("End must be after start");
                     body.put("scheduled_end_time", end.toString());
                 }
-                if (type == 3) body.put("entity_metadata", java.util.Map.of("location", location));
+                if (type == 3) body.put("entity_metadata", Map.of("location", location));
                 else body.put("channel_id", channelId);
                 return "Created scheduled event:\n" + formatSavedEvent(api.create(guild.getId(), body));
             }
@@ -247,7 +253,7 @@ public class ScheduledEventService {
             if (provided(location) && (location.isBlank() || location.length() > 100)) {
                 throw new IllegalArgumentException("location must be nonblank and at most 100 characters");
             }
-            OffsetDateTime now = OffsetDateTime.now(java.time.ZoneOffset.UTC);
+            OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
             if (newStart != null && (current.getInt("status", 0) != 1
                     || !newStart.isAfter(now) || !newStart.isBefore(now.plusYears(5)))) {
                 throw new IllegalArgumentException("Only scheduled events can move to a future start within five years");
@@ -269,7 +275,7 @@ public class ScheduledEventService {
                 OffsetDateTime convertedEnd = parseTime(end);
                 OffsetDateTime convertedStart = newStart == null ? parseTime(current.getString("scheduled_start_time")) : newStart;
                 if (!convertedEnd.isAfter(convertedStart)) throw new IllegalArgumentException("End must be after start");
-                body.put("entity_metadata", java.util.Map.of("location", location)).put("entity_type", 3)
+                body.put("entity_metadata", Map.of("location", location)).put("entity_type", 3)
                         .putNull("channel_id").put("scheduled_end_time", convertedEnd.toString());
             }
             if (newStatus != null) body.put("status", newStatus);
@@ -281,10 +287,10 @@ public class ScheduledEventService {
         if (newEnd != null) manager.setEndTime(newEnd);
         if (name != null && !name.isEmpty()) manager.setName(name);
         if (description != null && !description.isEmpty()) manager.setDescription(description);
-        if (scheduledStartTime != null && !scheduledStartTime.isEmpty()) manager.setStartTime(parseTime(scheduledStartTime));
+        if (newStart != null) manager.setStartTime(newStart);
         if (location != null && !location.isEmpty()) manager.setLocation(location);
-        if (status != null && !status.isEmpty()) {
-            manager.setStatus(switch (Integer.parseInt(status)) {
+        if (newStatus != null) {
+            manager.setStatus(switch (newStatus) {
                 case 1 -> ScheduledEvent.Status.SCHEDULED;
                 case 2 -> ScheduledEvent.Status.ACTIVE;
                 case 3 -> ScheduledEvent.Status.COMPLETED;
@@ -302,7 +308,7 @@ public class ScheduledEventService {
             @ToolParam(description = "Discord server ID", required = false) String guildId,
             @ToolParam(description = "ID of the scheduled event") String eventId,
             @ToolParam(description = "Direct HTTPS PNG or JPEG image URL") String imageUrl) {
-        var url = imageUrl == null ? null : okhttp3.HttpUrl.parse(imageUrl);
+        var url = imageUrl == null ? null : HttpUrl.parse(imageUrl);
         if (url == null || !url.isHttps()) throw new IllegalArgumentException("imageUrl must use HTTPS");
         Guild guild = getGuild(guildId);
         DataObject current = api.get(guild.getId(), eventId);
@@ -310,14 +316,14 @@ public class ScheduledEventService {
         int status = current.getInt("status");
         if (status != 1 && status != 2) throw new IllegalArgumentException("Event is not editable");
         byte[] bytes = RemoteFetchGuard.fetch(imageUrl, 5 * 1024 * 1024, "image");
-        net.dv8tion.jda.api.entities.Icon.IconType type;
+        Icon.IconType type;
         byte[] png = {(byte)137,80,78,71,13,10,26,10};
-        if (bytes.length >= 8 && java.util.Arrays.equals(java.util.Arrays.copyOf(bytes, 8), png)) {
-            type = net.dv8tion.jda.api.entities.Icon.IconType.PNG;
+        if (bytes.length >= 8 && Arrays.equals(Arrays.copyOf(bytes, 8), png)) {
+            type = Icon.IconType.PNG;
         } else if (bytes.length >= 3 && (bytes[0] & 255) == 255 && (bytes[1] & 255) == 216 && (bytes[2] & 255) == 255) {
-            type = net.dv8tion.jda.api.entities.Icon.IconType.JPEG;
+            type = Icon.IconType.JPEG;
         } else throw new IllegalArgumentException("Image must be PNG or JPEG");
-        var icon = net.dv8tion.jda.api.entities.Icon.from(bytes, type);
+        var icon = Icon.from(bytes, type);
         DataObject result = api.edit(guild.getId(), eventId, DataObject.empty().put("image", icon.getEncoding()));
         return "Updated scheduled event cover (ID: " + eventId + "). Cover: " + coverUrl(result, eventId);
     }
@@ -364,7 +370,7 @@ public class ScheduledEventService {
         }
 
         boolean includeUserCount = withUserCount == null || withUserCount.isEmpty() || Boolean.parseBoolean(withUserCount);
-        var details = new java.util.HashMap<String, DataObject>();
+        var details = new HashMap<String, DataObject>();
         String detailsNote = "";
         try {
             var raw = api.list(guild.getId(), false);
